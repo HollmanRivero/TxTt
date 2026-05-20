@@ -1,0 +1,12 @@
+# Environment files — NEVER commit these
+.env
+.env.local
+supabase/.env
+
+# Node
+node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
+Thumbs.db
