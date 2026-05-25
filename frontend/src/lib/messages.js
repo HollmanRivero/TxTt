@@ -136,3 +136,74 @@ export const updateProfile = async (userId, updates) => {
   if (error) throw error;
   return data;
 };
+
+// ── Media uploads ─────────────────────────────────────────────────────────────
+
+/** Upload an image file to Supabase Storage, returns public URL */
+export const uploadImage = async (userId, file) => {
+  const ext = file.name.split(".").pop();
+  const path = `${userId}/images/${Date.now()}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from("media")
+    .upload(path, file, { contentType: file.type, upsert: false });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage.from("media").getPublicUrl(path);
+  return data.publicUrl;
+};
+
+/** Upload an audio blob to Supabase Storage, returns public URL */
+export const uploadAudio = async (userId, blob) => {
+  const path = `${userId}/audio/${Date.now()}.webm`;
+
+  const { error } = await supabase.storage
+    .from("media")
+    .upload(path, blob, { contentType: "audio/webm", upsert: false });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage.from("media").getPublicUrl(path);
+  return data.publicUrl;
+};
+
+/** Send an image message */
+export const sendImageMessage = async (conversationId, senderId, file) => {
+  const fileUrl = await uploadImage(senderId, file);
+
+  const { data, error } = await supabase
+    .from("messages")
+    .insert({
+      conversation_id: conversationId,
+      sender_id: senderId,
+      message_type: "image",
+      file_url: fileUrl,
+      content: null,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+/** Send an audio message */
+export const sendAudioMessage = async (conversationId, senderId, blob) => {
+  const fileUrl = await uploadAudio(senderId, blob);
+
+  const { data, error } = await supabase
+    .from("messages")
+    .insert({
+      conversation_id: conversationId,
+      sender_id: senderId,
+      message_type: "audio",
+      file_url: fileUrl,
+      content: null,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};

@@ -2,122 +2,212 @@ import { useState } from "react";
 import {
   signInWithGoogle,
   signInWithApple,
-  sendEmailOTP,
+  signUpWithEmailPassword,
+  signInWithEmailPassword,
+  signUpWithPhone,
+  signInWithPhone,
   sendPhoneOTP,
   verifyOTP,
+  resetPasswordByEmail,
+  supabase,
 } from "../lib/supabase";
 import "./Auth.css";
 
-// ── Phone number formatter to E.164 ──────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const toE164 = (raw) => {
   const digits = raw.replace(/\D/g, "");
-  return digits.startsWith("00")
-    ? "+" + digits.slice(2)
-    : digits.startsWith("+")
-    ? raw.trim()
-    : "+" + digits;
+  return digits.startsWith("00") ? "+" + digits.slice(2) : "+" + digits;
 };
-
 const isValidEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 const isValidPhone = (v) => /^\+?[\d\s\-()]{7,}$/.test(v);
+const detectType = (val) => {
+  if (isValidEmail(val)) return "email";
+  if (isValidPhone(val)) return "phone";
+  return null;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function AuthPage() {
-  const [mode, setMode] = useState("choose"); // choose | otp-entry | otp-verify
-  const [inputType, setInputType] = useState(null); // "email" | "phone"
-  const [inputValue, setInputValue] = useState("");
-  const [otp, setOtp] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [info, setInfo] = useState(null);
+  // view: login | register | phone-verify | forgot | phone-reset-verify | set-new-password
+  const [view, setView] = useState("login");
 
-  // ── Detect whether user typed email or phone ────────────────────────────
-  const detectType = (val) => {
-    if (isValidEmail(val)) return "email";
-    if (isValidPhone(val)) return "phone";
-    return null;
+  const [inputValue, setInputValue]     = useState("");
+  const [inputType, setInputType]       = useState(null);
+  const [password, setPassword]         = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
+  // OTP / reset state
+  const [otp, setOtp]                     = useState("");
+  const [pendingPhone, setPendingPhone]   = useState("");
+  const [newPassword, setNewPassword]     = useState("");
+  const [confirmNew, setConfirmNew]       = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+  const [info, setInfo]       = useState(null);
+
+  const resetForm = (nextView) => {
+    setInputValue(""); setInputType(null);
+    setPassword(""); setConfirmPassword("");
+    setOtp(""); setNewPassword(""); setConfirmNew("");
+    setError(null); setInfo(null);
+    setView(nextView);
   };
 
   const handleInputChange = (e) => {
     setInputValue(e.target.value);
-    setError(null);
     setInputType(detectType(e.target.value));
+    setError(null);
   };
 
-  // ── Send OTP ─────────────────────────────────────────────────────────────
-  const handleSendOTP = async (e) => {
+  // ── LOGIN ─────────────────────────────────────────────────────────────────
+  const handleLogin = async (e) => {
     e.preventDefault();
     setError(null);
-
     const type = detectType(inputValue);
-    if (!type) {
-      setError("Enter a valid email address or phone number (with country code).");
-      return;
-    }
+    if (!type) return setError("Enter a valid email or phone number.");
+    if (!password) return setError("Enter your password.");
 
     setLoading(true);
     try {
-      let result;
-      if (type === "email") {
-        result = await sendEmailOTP(inputValue.trim());
-      } else {
-        result = await sendPhoneOTP(toE164(inputValue));
-      }
-
+      const result = type === "email"
+        ? await signInWithEmailPassword(inputValue.trim(), password)
+        : await signInWithPhone(toE164(inputValue), password);
       if (result.error) throw result.error;
-
-      setInputType(type);
-      setInfo(
-        type === "email"
-          ? `Check ${inputValue} — a 6-digit code is on its way.`
-          : `SMS sent to ${toE164(inputValue)}.`
-      );
-      setMode("otp-verify");
     } catch (err) {
-      setError(err.message || "Failed to send code. Try again.");
+      setError(err.message || "Login failed. Check your details and try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Verify OTP ────────────────────────────────────────────────────────────
-  const handleVerifyOTP = async (e) => {
+  // ── REGISTER ──────────────────────────────────────────────────────────────
+  const handleRegister = async (e) => {
     e.preventDefault();
     setError(null);
-
-    if (otp.length < 6) {
-      setError("Enter the 6-digit code.");
-      return;
-    }
+    const type = detectType(inputValue);
+    if (!type) return setError("Enter a valid email or phone number.");
+    if (password.length < 6) return setError("Password must be at least 6 characters.");
+    if (password !== confirmPassword) return setError("Passwords do not match.");
 
     setLoading(true);
     try {
-      const payload =
-        inputType === "email"
-          ? { email: inputValue.trim(), token: otp }
-          : { phone: toE164(inputValue), token: otp };
-
-      const result = await verifyOTP(payload);
-      if (result.error) throw result.error;
-      // Auth context picks up the session change — App will redirect
+      if (type === "email") {
+        const result = await signUpWithEmailPassword(inputValue.trim(), password);
+        if (result.error) throw result.error;
+        setInfo("Check your email for a confirmation link, then log in.");
+        resetForm("login");
+      } else {
+        const phone = toE164(inputValue);
+        const result = await signUpWithPhone(phone, password);
+        if (result.error) throw result.error;
+        setPendingPhone(phone);
+        setInfo(`SMS sent to ${phone}. Enter the code to finish registration.`);
+        setView("phone-verify");
+      }
     } catch (err) {
-      setError(err.message || "Invalid code. Check and try again.");
+      setError(err.message || "Registration failed. Try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Google OAuth ──────────────────────────────────────────────────────────
+  // ── PHONE VERIFY (registration, once ever) ────────────────────────────────
+  const handleVerifyPhone = async (e) => {
+    e.preventDefault();
+    setError(null);
+    if (otp.length < 6) return setError("Enter the 6-digit code.");
+
+    setLoading(true);
+    try {
+      const result = await verifyOTP({ phone: pendingPhone, token: otp });
+      if (result.error) throw result.error;
+      // useAuth picks up session — App redirects automatically
+    } catch (err) {
+      setError(err.message || "Invalid code. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── FORGOT PASSWORD ───────────────────────────────────────────────────────
+  const handleForgot = async (e) => {
+    e.preventDefault();
+    setError(null);
+    const type = detectType(inputValue);
+    if (!type) return setError("Enter the email or phone you registered with.");
+
+    setLoading(true);
+    try {
+      if (type === "email") {
+        const result = await resetPasswordByEmail(inputValue.trim());
+        if (result.error) throw result.error;
+        setInfo(`Reset link sent to ${inputValue.trim()}. Check your inbox.`);
+        setView("login");
+      } else {
+        const phone = toE164(inputValue);
+        const result = await sendPhoneOTP(phone);
+        if (result.error) throw result.error;
+        setPendingPhone(phone);
+        setInfo(`SMS sent to ${phone}. Enter the code to reset your password.`);
+        setView("phone-reset-verify");
+      }
+    } catch (err) {
+      setError(err.message || "Could not send reset. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── PHONE RESET — verify OTP ──────────────────────────────────────────────
+  const handlePhoneResetVerify = async (e) => {
+    e.preventDefault();
+    setError(null);
+    if (otp.length < 6) return setError("Enter the 6-digit code.");
+
+    setLoading(true);
+    try {
+      const result = await verifyOTP({ phone: pendingPhone, token: otp });
+      if (result.error) throw result.error;
+      setOtp("");
+      setView("set-new-password");
+    } catch (err) {
+      setError(err.message || "Invalid code. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── SET NEW PASSWORD (after phone OTP reset) ──────────────────────────────
+  const handleSetNewPassword = async (e) => {
+    e.preventDefault();
+    setError(null);
+    if (newPassword.length < 6) return setError("Password must be at least 6 characters.");
+    if (newPassword !== confirmNew) return setError("Passwords do not match.");
+
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setInfo("Password updated! You are now logged in.");
+      // useAuth picks up the session — App redirects to /
+    } catch (err) {
+      setError(err.message || "Could not update password. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── GOOGLE ────────────────────────────────────────────────────────────────
   const handleGoogle = async () => {
     setError(null);
     setLoading(true);
     const { error } = await signInWithGoogle();
     if (error) { setError(error.message); setLoading(false); }
-    // Browser redirects to Google — loading stays true until redirect
   };
 
-  // ── Apple OAuth ───────────────────────────────────────────────────────────
   const handleApple = async () => {
     setError(null);
     setLoading(true);
@@ -126,21 +216,97 @@ export default function AuthPage() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-
   return (
     <div className="auth-root">
       <div className="auth-card">
 
-        {/* Logo */}
         <div className="auth-logo">
           <span className="logo-tx">Tx</span><span className="logo-tt">Tt</span>
         </div>
         <p className="auth-tagline">Talk. Share. Call. Offline first.</p>
 
-        {/* ── STEP 1: Choose method ───────────────────────────── */}
-        {mode === "choose" && (
+        {/* ── LOGIN ──────────────────────────────────────────────── */}
+        {view === "login" && (
           <>
-            <form className="auth-form" onSubmit={handleSendOTP}>
+            <form className="auth-form" onSubmit={handleLogin}>
+              <label className="auth-label">
+                Phone or email
+                <input
+                  className="auth-input"
+                  type="text"
+                  placeholder="+47 123 45 678 or you@email.com"
+                  value={inputValue}
+                  onChange={handleInputChange}
+                  autoComplete="username"
+                  disabled={loading}
+                />
+              </label>
+
+              <label className="auth-label">
+                Password
+                <div className="field-input-wrap">
+                  <input
+                    className="auth-input"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Your password"
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setError(null); }}
+                    autoComplete="current-password"
+                    disabled={loading}
+                  />
+                  <button type="button" className="field-eye-btn"
+                    onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </label>
+
+              <button
+                type="button"
+                className="link-btn forgot-link"
+                onClick={() => resetForm("forgot")}
+              >
+                Forgot password?
+              </button>
+
+              {error && <p className="auth-error">{error}</p>}
+              {info  && <p className="auth-info">{info}</p>}
+
+              <button className="auth-btn primary" type="submit"
+                disabled={loading || !inputType || !password}>
+                {loading ? <span className="spinner" /> : "Log in →"}
+              </button>
+            </form>
+
+            <div className="auth-divider"><span>or</span></div>
+            <div className="oauth-stack">
+              <button className="auth-btn oauth google" onClick={handleGoogle}
+                disabled={loading} type="button">
+                <GoogleIcon /> Continue with Google
+              </button>
+              <button className="auth-btn oauth apple" onClick={handleApple}
+                disabled={loading} type="button">
+                <AppleIcon /> Continue with Apple
+              </button>
+            </div>
+
+            <p className="auth-switch">
+              Don't have an account?{" "}
+              <button className="link-btn" onClick={() => resetForm("register")} type="button">
+                Sign up
+              </button>
+            </p>
+            <p className="auth-legal">
+              By continuing you agree to our <a href="/terms">Terms</a> and{" "}
+              <a href="/privacy">Privacy Policy</a>.
+            </p>
+          </>
+        )}
+
+        {/* ── REGISTER ───────────────────────────────────────────── */}
+        {view === "register" && (
+          <>
+            <form className="auth-form" onSubmit={handleRegister}>
               <label className="auth-label">
                 Phone or email
                 <input
@@ -154,61 +320,83 @@ export default function AuthPage() {
                 />
                 {inputType && (
                   <span className="input-hint">
-                    {inputType === "email" ? "📧 Email OTP" : "📱 SMS via Twilio"}
+                    {inputType === "email"
+                      ? "📧 Confirmation link sent to your inbox"
+                      : "📱 One-time SMS code to verify your number"}
                   </span>
                 )}
               </label>
 
+              <label className="auth-label">
+                Password
+                <div className="field-input-wrap">
+                  <input
+                    className="auth-input"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="At least 6 characters"
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setError(null); }}
+                    autoComplete="new-password"
+                    disabled={loading}
+                  />
+                  <button type="button" className="field-eye-btn"
+                    onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </label>
+
+              <label className="auth-label">
+                Confirm password
+                <input
+                  className="auth-input"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Repeat password"
+                  value={confirmPassword}
+                  onChange={(e) => { setConfirmPassword(e.target.value); setError(null); }}
+                  autoComplete="new-password"
+                  disabled={loading}
+                />
+              </label>
+
               {error && <p className="auth-error">{error}</p>}
 
-              <button
-                className="auth-btn primary"
-                type="submit"
-                disabled={loading || !inputType}
-              >
-                {loading ? <span className="spinner" /> : "Send code →"}
+              <button className="auth-btn primary" type="submit"
+                disabled={loading || !inputType || !password || !confirmPassword}>
+                {loading ? <span className="spinner" /> : "Create account →"}
               </button>
             </form>
 
             <div className="auth-divider"><span>or</span></div>
-
-            {/* OAuth buttons */}
             <div className="oauth-stack">
-              <button
-                className="auth-btn oauth google"
-                onClick={handleGoogle}
-                disabled={loading}
-                type="button"
-              >
-                <GoogleIcon />
-                Continue with Google
+              <button className="auth-btn oauth google" onClick={handleGoogle}
+                disabled={loading} type="button">
+                <GoogleIcon /> Continue with Google
               </button>
-
-              <button
-                className="auth-btn oauth apple"
-                onClick={handleApple}
-                disabled={loading}
-                type="button"
-              >
-                <AppleIcon />
-                Continue with Apple
+              <button className="auth-btn oauth apple" onClick={handleApple}
+                disabled={loading} type="button">
+                <AppleIcon /> Continue with Apple
               </button>
             </div>
 
+            <p className="auth-switch">
+              Already have an account?{" "}
+              <button className="link-btn" onClick={() => resetForm("login")} type="button">
+                Log in
+              </button>
+            </p>
             <p className="auth-legal">
-              By continuing you agree to our{" "}
-              <a href="/terms">Terms</a> and{" "}
+              By continuing you agree to our <a href="/terms">Terms</a> and{" "}
               <a href="/privacy">Privacy Policy</a>.
             </p>
           </>
         )}
 
-        {/* ── STEP 2: Verify OTP ──────────────────────────────── */}
-        {mode === "otp-verify" && (
+        {/* ── PHONE VERIFY — registration ─────────────────────────── */}
+        {view === "phone-verify" && (
           <>
             {info && <p className="auth-info">{info}</p>}
-
-            <form className="auth-form" onSubmit={handleVerifyOTP}>
+            <form className="auth-form" onSubmit={handleVerifyPhone}>
               <label className="auth-label">
                 6-digit code
                 <input
@@ -216,47 +404,134 @@ export default function AuthPage() {
                   type="number"
                   placeholder="123456"
                   value={otp}
-                  onChange={(e) => {
-                    setOtp(e.target.value.slice(0, 6));
-                    setError(null);
-                  }}
+                  onChange={(e) => { setOtp(e.target.value.slice(0, 6)); setError(null); }}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  disabled={loading}
+                />
+                <span className="input-hint">
+                  This is the only time you'll need a code. After this, log in with your password.
+                </span>
+              </label>
+              {error && <p className="auth-error">{error}</p>}
+              <button className="auth-btn primary" type="submit"
+                disabled={loading || otp.length < 6}>
+                {loading ? <span className="spinner" /> : "Verify & continue →"}
+              </button>
+            </form>
+            <button className="auth-btn ghost" onClick={() => resetForm("register")} type="button">
+              ← Back
+            </button>
+          </>
+        )}
+
+        {/* ── FORGOT PASSWORD ─────────────────────────────────────── */}
+        {view === "forgot" && (
+          <>
+            <p className="auth-info">
+              Enter the email or phone number you registered with. We'll send you a reset link or code.
+            </p>
+            <form className="auth-form" onSubmit={handleForgot}>
+              <label className="auth-label">
+                Phone or email
+                <input
+                  className="auth-input"
+                  type="text"
+                  placeholder="+47 123 45 678 or you@email.com"
+                  value={inputValue}
+                  onChange={handleInputChange}
+                  autoComplete="username"
+                  autoFocus
+                  disabled={loading}
+                />
+              </label>
+              {error && <p className="auth-error">{error}</p>}
+              <button className="auth-btn primary" type="submit"
+                disabled={loading || !inputType}>
+                {loading ? <span className="spinner" /> : "Send reset →"}
+              </button>
+            </form>
+            <button className="auth-btn ghost" onClick={() => resetForm("login")} type="button">
+              ← Back to login
+            </button>
+          </>
+        )}
+
+        {/* ── PHONE RESET — verify OTP ────────────────────────────── */}
+        {view === "phone-reset-verify" && (
+          <>
+            {info && <p className="auth-info">{info}</p>}
+            <form className="auth-form" onSubmit={handlePhoneResetVerify}>
+              <label className="auth-label">
+                6-digit code
+                <input
+                  className="auth-input otp-input"
+                  type="number"
+                  placeholder="123456"
+                  value={otp}
+                  onChange={(e) => { setOtp(e.target.value.slice(0, 6)); setError(null); }}
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   autoFocus
                   disabled={loading}
                 />
               </label>
-
               {error && <p className="auth-error">{error}</p>}
-
-              <button
-                className="auth-btn primary"
-                type="submit"
-                disabled={loading || otp.length < 6}
-              >
+              <button className="auth-btn primary" type="submit"
+                disabled={loading || otp.length < 6}>
                 {loading ? <span className="spinner" /> : "Verify →"}
               </button>
             </form>
-
-            <button
-              className="auth-btn ghost"
-              onClick={() => { setMode("choose"); setOtp(""); setError(null); setInfo(null); }}
-              type="button"
-            >
+            <button className="auth-btn ghost" onClick={() => resetForm("forgot")} type="button">
               ← Back
             </button>
+          </>
+        )}
 
-            <p className="auth-resend">
-              Didn't get a code?{" "}
-              <button
-                className="link-btn"
-                onClick={handleSendOTP}
-                disabled={loading}
-                type="button"
-              >
-                Resend
+        {/* ── SET NEW PASSWORD (after phone OTP reset) ────────────── */}
+        {view === "set-new-password" && (
+          <>
+            <p className="auth-info">Choose a new password for your account.</p>
+            <form className="auth-form" onSubmit={handleSetNewPassword}>
+              <label className="auth-label">
+                New password
+                <div className="field-input-wrap">
+                  <input
+                    className="auth-input"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="At least 6 characters"
+                    value={newPassword}
+                    onChange={(e) => { setNewPassword(e.target.value); setError(null); }}
+                    autoComplete="new-password"
+                    autoFocus
+                    disabled={loading}
+                  />
+                  <button type="button" className="field-eye-btn"
+                    onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </label>
+              <label className="auth-label">
+                Confirm new password
+                <input
+                  className="auth-input"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Repeat new password"
+                  value={confirmNew}
+                  onChange={(e) => { setConfirmNew(e.target.value); setError(null); }}
+                  autoComplete="new-password"
+                  disabled={loading}
+                />
+              </label>
+              {error && <p className="auth-error">{error}</p>}
+              {info  && <p className="auth-info">{info}</p>}
+              <button className="auth-btn primary" type="submit"
+                disabled={loading || !newPassword || !confirmNew}>
+                {loading ? <span className="spinner" /> : "Save new password →"}
               </button>
-            </p>
+            </form>
           </>
         )}
 
@@ -264,8 +539,6 @@ export default function AuthPage() {
     </div>
   );
 }
-
-// ── SVG icons ─────────────────────────────────────────────────────────────────
 
 function GoogleIcon() {
   return (

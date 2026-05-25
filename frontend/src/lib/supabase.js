@@ -51,6 +51,28 @@ export const verifyOTP = ({ email, phone, token }) => {
   return supabase.auth.verifyOtp({ phone, token, type: "sms" });
 };
 
+/** Register with email + password (no OTP — Supabase sends confirmation link) */
+export const signUpWithEmailPassword = (email, password) =>
+  supabase.auth.signUp({ email, password });
+
+/** Sign in with email + password */
+export const signInWithEmailPassword = (email, password) =>
+  supabase.auth.signInWithPassword({ email, password });
+
+/** Register with phone + password — sends OTP once for verification */
+export const signUpWithPhone = (phone, password) =>
+  supabase.auth.signUp({ phone, password });
+
+/** Sign in with phone + password — no OTP, direct login */
+export const signInWithPhone = (phone, password) =>
+  supabase.auth.signInWithPassword({ phone, password });
+
+/** Send password reset email — link redirects to /auth/reset */
+export const resetPasswordByEmail = (email) =>
+  supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/auth/reset`,
+  });
+
 /** Sign out */
 export const signOut = () => supabase.auth.signOut();
 

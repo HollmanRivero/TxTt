@@ -2,10 +2,20 @@
 .env
 .env.local
 supabase/.env
+node_modules/
+dist/
+.env
+.env.local
+.vscode/
+
 
 # Node
 node_modules/
 frontend/dist/
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
 
 # OS
 .DS_Store

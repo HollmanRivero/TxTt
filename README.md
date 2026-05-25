@@ -1,209 +1,139 @@
 # TxTt
 
-> Talk. Share. Call. Offline first.
+**Talk. Share. Call. Offline first.**
 
-A free, open-source Progressive Web App for instant messaging, media sharing, audio/video calls, and voice messages — installable on Android and iOS with no dependency on paid cloud services.
+TxTt is a free, offline-first messaging app built as a Progressive Web App (PWA). It runs in any modern browser and installs on phones straight from the web — no App Store, no Google Play, no fees. Send messages, share links, images and audio, make voice and video calls, and chat with a built-in AI assistant that can operate the app for you.
 
 ---
 
 ## Features
 
-- 💬 Instant messaging with offline support
-- 🖼️ Share links, images, and audio
-- 📞 Audio and video calls via WebRTC
-- 🎙️ Voice message recording
-- 📵 Works offline (PWA with service worker)
-- 📱 Installable on Android (TWA) and iOS (Capacitor)
-- 🔐 Auth via phone (SMS/Twilio), email OTP, Google, or Apple
+### Messaging & sharing
+- Real-time one-to-one messaging
+- Image sharing
+- Audio messages (record and send voice clips)
+- Link sharing
+- Conversation history with live updates
+
+### Calls
+- Voice calls (WebRTC, peer-to-peer)
+- Video calls
+- Incoming-call handling
+
+### Accounts & security
+- Sign up with email + password, phone + password, or Google
+- Phone numbers are verified once with an SMS code at registration — after that you log in with just your password (no repeated codes)
+- "Forgot password" recovery by email link or phone code
+- Editable profile: display name, username, email, phone, and password
+- Add both an email and a phone to one account and log in with either
+
+### AI assistant (in-app bot)
+- A Claude-powered assistant lives inside the app as a two-way chat
+- It can list contacts, search your messages, read conversation history, send messages, start calls, and change settings — all by understanding plain-language requests
+- Sending a message or starting a call always shows a confirmation card first, so nothing happens without your approval
+- All actions run with your own login, so your data stays protected by row-level security
+
+### Installable PWA
+- Works offline (service worker + caching)
+- Installable to the home screen on Android and iOS
+- Standalone, full-screen app experience
 
 ---
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
-|---|---|
-| Frontend | React + Vite (PWA) |
-| Backend / Auth | Self-hosted Supabase |
-| Real-time | Supabase Realtime |
-| Storage | Supabase Storage |
-| Calls | WebRTC + Coturn (TURN server) |
-| Proxy / HTTPS | Caddy |
-| SMS | Twilio Verify |
-| Android | TWA (Trusted Web Activity) |
-| iOS | Capacitor |
+|-------|-----------|
+| Frontend | React + Vite, PWA (vite-plugin-pwa) |
+| Routing | React Router |
+| Backend | Supabase (Postgres, Auth, Realtime, Storage) |
+| Calls | WebRTC (peer-to-peer), Supabase Realtime for signaling |
+| AI assistant | Supabase Edge Function (Deno) proxying the Anthropic API |
+| Hosting | Vercel (frontend), Supabase (backend) |
 
 ---
 
-## Requirements
+## Architecture
 
-- A Linux server (Oracle Cloud Free VM works perfectly)
-- A domain name with DNS pointing to your server
-- Docker + Docker Compose
-- Node.js 20+
-- A Twilio account (for SMS OTP)
-- A Google Cloud project (for Google OAuth)
-- An Apple Developer account (for Apple Sign-In)
+- **Frontend** — a React PWA. Talks to Supabase for auth, data, realtime updates, and file storage.
+- **Supabase** — handles users, conversations, messages, profiles, and media. Row-level security keeps each user's data private.
+- **AI assistant** — the browser never holds the Anthropic API key. The bot UI sends the conversation to a Supabase Edge Function, which calls the Anthropic API server-side and returns the reply. Any tools the assistant proposes are executed in the frontend (under the user's session), with a confirmation step before sending messages or starting calls.
 
 ---
 
-## Installation
+## Project structure
 
-### 1. Clone the repo
+```
+TxTt/
+├── frontend/                 # React + Vite PWA
+│   ├── src/
+│   │   ├── pages/            # Auth, Conversations, ChatRoom, CallRoom, Settings, Bot, ResetPassword
+│   │   ├── components/       # CallProvider, AudioRecorder, IncomingCall, ...
+│   │   ├── hooks/            # useAuth
+│   │   └── lib/              # supabase, messages, webrtc
+│   ├── public/
+│   └── vite.config.js
+└── supabase/
+    ├── functions/
+    │   └── bot/              # Edge Function: Anthropic proxy + tool definitions
+    └── migrations/           # Database schema
+```
 
+---
+
+## Getting started
+
+### Prerequisites
+- Node.js (LTS)
+- A Supabase project
+- An Anthropic API key (for the assistant)
+- Supabase CLI (for deploying the Edge Function)
+
+### 1. Install dependencies
 ```bash
-git clone https://github.com/HollmanRivero/TxTt.git
-cd TxTt
-```
-
----
-
-### 2. Configure Supabase
-
-```bash
-cd supabase
-cp .env.example .env
-nano .env
-```
-
-Fill in every value. Key ones:
-
-```env
-API_EXTERNAL_URL=https://api.yourdomain.com
-SITE_URL=https://yourdomain.com
-POSTGRES_PASSWORD=your_strong_password
-JWT_SECRET=        # generate: openssl rand -base64 64
-ANON_KEY=          # see docs below
-SERVICE_ROLE_KEY=  # see docs below
-```
-
-Generate `ANON_KEY` and `SERVICE_ROLE_KEY`:
-👉 https://supabase.com/docs/guides/self-hosting#api-keys
-
----
-
-### 3. Start Supabase
-
-```bash
-docker compose up -d
-
-# Watch logs until GoTrue and PostgREST say they're ready
-docker compose logs -f
-```
-
----
-
-### 4. Configure the frontend
-
-```bash
-cd ../frontend
-cp .env.example .env.local
-nano .env.local
-```
-
-```env
-VITE_SUPABASE_URL=https://api.yourdomain.com
-VITE_SUPABASE_ANON_KEY=your_anon_key
-```
-
----
-
-### 5. Build the frontend
-
-```bash
+cd frontend
 npm install
-npm run build
-# Output goes to frontend/dist/
 ```
 
----
-
-### 6. Configure Caddy
-
-Edit `/etc/caddy/Caddyfile`:
-
+### 2. Environment variables
+Create `frontend/.env` with your Supabase project values:
 ```
-yourdomain.com {
-    root * /home/ubuntu/TxTt/frontend/dist
-    file_server
-    try_files {path} /index.html
-}
-
-api.yourdomain.com {
-    reverse_proxy localhost:8000
-}
-
-studio.yourdomain.com {
-    reverse_proxy localhost:3001
-}
+VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
+### 3. Run locally
 ```bash
-sudo systemctl reload caddy
+npm run dev
 ```
-
-Caddy automatically issues and renews your HTTPS certificate.
-
----
-
-### 7. Open firewall ports (Oracle Cloud)
-
-In the Oracle Cloud dashboard, add ingress rules for TCP ports **80** and **443**.
-
-Then on the server:
-
+To test on your phone over the same Wi-Fi:
 ```bash
-sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
-sudo netfilter-persistent save
+npm run dev -- --host
 ```
+Then open the `Network` address shown in the terminal on your phone.
 
----
-
-### 8. Visit your app
-
-- `https://yourdomain.com` — TxTt app
-- `https://studio.yourdomain.com` — Supabase dashboard
-
----
-
-## Deploying updates
-
+### 4. Deploy the AI assistant (Edge Function)
+The Anthropic API key is stored server-side as a Supabase secret — never in the frontend.
 ```bash
-# On your computer
-git add .
-git commit -m "your change"
-git push
-
-# On the server
-cd ~/TxTt
-git pull
-cd frontend && npm run build
+supabase login
+supabase link --project-ref YOUR_PROJECT_REF
+supabase secrets set ANTHROPIC_API_KEY=your-anthropic-key
+supabase functions deploy bot
 ```
 
----
-
-## OAuth Setup
-
-### Google
-1. [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Credentials
-2. Create OAuth 2.0 Client ID (Web application)
-3. Add redirect URI: `https://api.yourdomain.com/auth/v1/callback`
-4. Copy Client ID and Secret into `supabase/.env`
-
-### Apple
-1. [developer.apple.com](https://developer.apple.com) → Certificates → Identifiers → Services IDs
-2. Return URL: `https://api.yourdomain.com/auth/v1/callback`
-3. Generate client secret JWT: https://supabase.com/docs/guides/auth/social-login/auth-apple
-4. Copy values into `supabase/.env`
+### 5. Deploy the frontend
+Push to GitHub and connect the repository to Vercel (set the project root to `frontend`, framework Vite), or deploy directly with the Vercel CLI. Remember to:
+- Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Vercel's environment variables
+- Add your production URL to Supabase under Authentication → URL Configuration, so Google login and password reset work
 
 ---
 
 ## License
 
-MIT — see [LICENSE](./LICENSE)
-
----
+Proprietary — Lifetime Owner: **Hollman Rivero** (Salazar Rivero Smart Things). All rights reserved.
+See the [LICENSE](LICENSE) file for the full terms. No use, copying, modification, or distribution is permitted without prior written permission from the Owner.
 
 ## Contact
 
-**HollmanRivero** — test@Txtt.io
+Salazar Rivero Smart Things
+hollman.rivero@bygg-salazar.no
