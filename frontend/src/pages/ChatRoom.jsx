@@ -177,27 +177,44 @@ export default function ChatRoom() {
 
   // ── Start a call ────────────────────────────────────────────
   const handleStartCall = async (isVideo) => {
-    if (!otherUser) return;
+    console.log("[Call] handleStartCall klikket, isVideo:", isVideo, "otherUser:", otherUser);
+
+    if (!otherUser) {
+      alert("Kan ikke starte anrop: motpartens profil er ikke lastet (otherUser er null). Sjekk at SQL-fiks for members_read er kjoert.");
+      return;
+    }
+
     const myName =
       user.user_metadata?.full_name || user.email || user.phone || "Someone";
 
-    // Notify the other user
-    await inviteToCall({
-      targetUserId: otherUser.id,
-      conversationId,
-      callerId: user.id,
-      callerName: myName,
-      isVideo,
-    });
+    try {
+      // Naviger FOERST, sa inviteToCall ikke hindrer det hvis realtime henger
+      navigate(`/call/${conversationId}`, {
+        state: {
+          isVideo,
+          isAnswering: false,
+          callerName: otherUser.full_name || otherUser.username || "Unknown",
+        },
+      });
 
-    // Navigate to call screen as the caller
-    navigate(`/call/${conversationId}`, {
-      state: {
-        isVideo,
-        isAnswering: false,
-        callerName: otherUser.full_name || otherUser.username || "Unknown",
-      },
-    });
+      // Send invite med timeout (5 sek) - hindrer evig hang hvis realtime ikke svarer
+      await Promise.race([
+        inviteToCall({
+          targetUserId: otherUser.id,
+          conversationId,
+          callerId: user.id,
+          callerName: myName,
+          isVideo,
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("inviteToCall timed out etter 5 sek")), 5000)
+        ),
+      ]);
+      console.log("[Call] Invite sendt");
+    } catch (err) {
+      console.error("[Call] Feil under inviteToCall:", err);
+      alert("Feil under anrop: " + err.message);
+    }
   };
 
   const formatTime = (ts) =>
