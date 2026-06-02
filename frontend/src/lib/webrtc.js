@@ -1,17 +1,29 @@
 import { supabase } from "./supabase";
 
 // ── ICE servers ───────────────────────────────────────────────────────────────
-// STUN is free (Google public). TURN goes here once your Coturn server is up.
+// STUN finner offentlig IP (gratis). TURN relayer trafikk hvis NAT blokkerer
+// direkte peer-to-peer (nodvendig for de fleste hjemmenettverk).
+// Open Relay Project = gratis offentlig TURN, OK for testing.
+// For produksjon: kjor egen Coturn eller bruk Twilio/Metered.
 const ICE_SERVERS = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
-    // ── Add your Coturn TURN server later: ──
-    // {
-    //   urls: "turn:turn.yourdomain.com:3478",
-    //   username: "txtt",
-    //   credential: "your_turn_password",
-    // },
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
   ],
 };
 
@@ -43,22 +55,36 @@ export class CallSession {
     // Send our ICE candidates to the other peer
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
+        const type = event.candidate.type; // host | srflx | relay
+        console.log("[WebRTC] genererte ICE-kandidat type:", type);
         this._signal("ice-candidate", { candidate: event.candidate });
+      } else {
+        console.log("[WebRTC] ICE-gathering ferdig (null candidate)");
       }
     };
 
     // Receive the remote stream
     this.pc.ontrack = (event) => {
+      console.log("[WebRTC] ontrack - mottok remote stream");
       this.onRemoteStream?.(event.streams[0]);
     };
 
     // Track connection state
     this.pc.onconnectionstatechange = () => {
       const state = this.pc.connectionState;
+      console.log("[WebRTC] connectionState ->", state);
       this.onStateChange?.(state);
       if (state === "disconnected" || state === "failed" || state === "closed") {
         this.hangup();
       }
+    };
+
+    // Mer detaljert ICE-tilstand
+    this.pc.oniceconnectionstatechange = () => {
+      console.log("[WebRTC] iceConnectionState ->", this.pc.iceConnectionState);
+    };
+    this.pc.onicegatheringstatechange = () => {
+      console.log("[WebRTC] iceGatheringState ->", this.pc.iceGatheringState);
     };
 
     // Get local audio/video
