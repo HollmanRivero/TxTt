@@ -192,32 +192,58 @@ export class CallSession {
 // ── Incoming call listener ──────────────────────────────────────────────────────
 // Each user listens on a personal channel for incoming call invites.
 export const listenForCalls = (userId, onIncomingCall) => {
-  const channel = supabase.channel(`user-calls:${userId}`, {
+  const channelName = `user-calls:${userId}`;
+  console.log("[listenForCalls] Lager kanal:", channelName);
+
+  const channel = supabase.channel(channelName, {
     config: { broadcast: { self: false } },
   });
 
   channel.on("broadcast", { event: "incoming-call" }, ({ payload }) => {
-    onIncomingCall(payload); // { conversationId, callerId, callerName, isVideo }
+    console.log("[listenForCalls] MOTTATT incoming-call:", payload);
+    onIncomingCall(payload);
   });
 
-  channel.subscribe();
+  channel.subscribe((status) => {
+    console.log("[listenForCalls] subscribe-status:", status, "kanal:", channelName);
+  });
   return channel;
 };
 
 // ── Send a call invite to another user ─────────────────────────────────────────
 export const inviteToCall = async ({ targetUserId, conversationId, callerId, callerName, isVideo }) => {
-  const channel = supabase.channel(`user-calls:${targetUserId}`);
-  await new Promise((resolve) => {
+  const channelName = `user-calls:${targetUserId}`;
+  console.log("[inviteToCall] Sender til kanal:", channelName, "fra:", callerId);
+
+  const channel = supabase.channel(channelName);
+
+  await new Promise((resolve, reject) => {
+    let resolved = false;
     channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") resolve();
+      console.log("[inviteToCall] subscribe-status:", status);
+      if (status === "SUBSCRIBED" && !resolved) {
+        resolved = true;
+        resolve();
+      }
+      if ((status === "CHANNEL_ERROR" || status === "TIMED_OUT") && !resolved) {
+        resolved = true;
+        reject(new Error(`Channel subscribe ${status}`));
+      }
     });
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        reject(new Error("Channel subscribe timeout (3s)"));
+      }
+    }, 3000);
   });
 
-  await channel.send({
+  const result = await channel.send({
     type: "broadcast",
     event: "incoming-call",
     payload: { conversationId, callerId, callerName, isVideo },
   });
+  console.log("[inviteToCall] send-result:", result);
 
   // Clean up after sending
   setTimeout(() => supabase.removeChannel(channel), 1000);
