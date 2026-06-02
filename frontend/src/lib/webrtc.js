@@ -32,6 +32,8 @@ export class CallSession {
     this.localStream = null;
     this.channel = null;
     this.isCaller = false;
+    this.lastOffer = null;            // lagres saa caller kan re-sende ved "ready"
+    this.pendingIceCandidates = [];   // buffer ICE-kandidater foer remote description er satt
   }
 
   // ── Set up the peer connection ──────────────────────────────
@@ -89,8 +91,16 @@ export class CallSession {
     this.channel.on("broadcast", { event: "signal" }, async ({ payload }) => {
       // Ignore our own messages
       if (payload.from === this.userId) return;
+      console.log("[WebRTC] mottok signal:", payload.type);
 
       switch (payload.type) {
+        case "ready":
+          // Mottakeren er paa kanalen - sender (re-)sender offer
+          if (this.isCaller && this.lastOffer) {
+            console.log("[WebRTC] caller mottok 'ready' -> re-sender offer");
+            this._signal("offer", { offer: this.lastOffer });
+          }
+          break;
         case "offer":
           await this._handleOffer(payload.offer);
           break;
@@ -121,6 +131,8 @@ export class CallSession {
 
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
+    this.lastOffer = offer;
+    console.log("[WebRTC] caller sender offer (forste gang)");
     this._signal("offer", { offer });
 
     return localStream;
@@ -130,27 +142,58 @@ export class CallSession {
   async answerCall() {
     this.isCaller = false;
     await this._subscribeSignaling();
-    return await this._createPeerConnection();
+    const localStream = await this._createPeerConnection();
+
+    // Fortell caller at vi er paa kanalen og klar til aa motta offer
+    console.log("[WebRTC] callee sender 'ready' for aa be om offer");
+    this._signal("ready", {});
+
+    return localStream;
   }
 
   // ── Handle incoming offer (callee side) ─────────────────────
   async _handleOffer(offer) {
     if (!this.pc) await this._createPeerConnection();
+    console.log("[WebRTC] callee handler offer -> setRemoteDescription");
     await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
+    await this._flushPendingIce();
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
+    console.log("[WebRTC] callee sender answer");
     this._signal("answer", { answer });
   }
 
   // ── Handle incoming answer (caller side) ────────────────────
   async _handleAnswer(answer) {
+    console.log("[WebRTC] caller mottok answer -> setRemoteDescription");
     await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
+    await this._flushPendingIce();
+  }
+
+  // ── Tom ICE-buffer naar remote description er satt ──────────
+  async _flushPendingIce() {
+    if (!this.pc?.remoteDescription || this.pendingIceCandidates.length === 0) return;
+    console.log("[WebRTC] tommer", this.pendingIceCandidates.length, "ICE-kandidater fra buffer");
+    for (const c of this.pendingIceCandidates) {
+      try {
+        await this.pc.addIceCandidate(new RTCIceCandidate(c));
+      } catch (err) {
+        console.error("[WebRTC] feil ved ICE fra buffer:", err);
+      }
+    }
+    this.pendingIceCandidates = [];
   }
 
   // ── Handle ICE candidate ────────────────────────────────────
   async _handleIceCandidate(candidate) {
     try {
-      await this.pc?.addIceCandidate(new RTCIceCandidate(candidate));
+      // Hvis remote description ikke er satt enda, buffer kandidaten
+      if (!this.pc || !this.pc.remoteDescription) {
+        this.pendingIceCandidates.push(candidate);
+        console.log("[WebRTC] buffer ICE-kandidat (remote description ikke klar). Buffer:", this.pendingIceCandidates.length);
+        return;
+      }
+      await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (err) {
       console.error("Error adding ICE candidate:", err);
     }
