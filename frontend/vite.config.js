@@ -7,7 +7,14 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.ico", "apple-touch-icon.png"],
+      includeAssets: [
+        "favicon.ico",
+        "favicon-16x16.png",
+        "favicon-32x32.png",
+        "favicon.svg",
+        "apple-touch-icon.png",
+        "splash.png",
+      ],
       manifest: {
         name: "TxTt",
         short_name: "TxTt",
@@ -21,6 +28,7 @@ export default defineConfig({
           { src: "pwa-192x192.png", sizes: "192x192", type: "image/png" },
           { src: "pwa-512x512.png", sizes: "512x512", type: "image/png" },
           { src: "pwa-512x512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+          { src: "apple-touch-icon.png", sizes: "180x180", type: "image/png" },
         ],
       },
       workbox: {
