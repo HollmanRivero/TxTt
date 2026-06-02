@@ -93,8 +93,17 @@ export class CallSession {
     };
 
     // Get local audio/video
+    // Eksplisitte audio-constraints for aa unngaa feedback-loop:
+    //  - echoCancellation: fjerner andres lyd fra mikrofonen
+    //  - noiseSuppression: filtrerer bakgrunnsstoy
+    //  - autoGainControl: normaliserer volum
+    // Browsers har dette PAA som standard, men noen ganger ikke. Eksplisitt = trygg.
     this.localStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
       video: this.isVideo,
     });
     this.localStream.getTracks().forEach((track) => {
