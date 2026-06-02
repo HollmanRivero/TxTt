@@ -108,8 +108,10 @@ export default function Settings() {
     }
   };
 
-  const getInitial = () =>
-    (fullName || username || email || "?")[0].toUpperCase();
+  const getInitial = () => {
+    const name = fullName || username || email;
+    return name ? name[0].toUpperCase() : <img src="/default-avatar.png" alt="" />;
+  };
 
   if (loading) {
     return (

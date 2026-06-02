@@ -114,7 +114,11 @@ export default function CallRoom() {
           <video ref={remoteVideoRef} autoPlay playsInline className="remote-video" />
         ) : (
           <div className="audio-call-bg">
-            <div className="audio-avatar">{callerName[0]?.toUpperCase()}</div>
+            <div className="audio-avatar">
+              {callerName && callerName !== "Unknown"
+                ? callerName[0].toUpperCase()
+                : <img src="/default-avatar.png" alt="" />}
+            </div>
           </div>
         )}
 

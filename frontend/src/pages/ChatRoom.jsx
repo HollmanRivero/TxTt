@@ -180,7 +180,8 @@ export default function ChatRoom() {
     new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const isOwn = (msg) => msg.sender_id === user?.id;
-  const getInitial = (name) => (name || "?")[0].toUpperCase();
+  const getInitial = (name) =>
+    name ? name[0].toUpperCase() : <img src="/default-avatar.png" alt="" />;
 
   const grouped = messages.map((msg, i) => ({
     ...msg,

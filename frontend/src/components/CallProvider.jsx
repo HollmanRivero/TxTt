@@ -43,7 +43,9 @@ export function CallProvider({ children }) {
         <div className="incoming-call-overlay">
           <div className="incoming-call-card">
             <div className="incoming-avatar">
-              {incomingCall.callerName?.[0]?.toUpperCase() || "?"}
+              {incomingCall.callerName
+                ? incomingCall.callerName[0].toUpperCase()
+                : <img src="/default-avatar.png" alt="" />}
             </div>
             <p className="incoming-name">{incomingCall.callerName}</p>
             <p className="incoming-type">

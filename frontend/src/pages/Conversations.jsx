@@ -65,7 +65,8 @@ export default function Conversations() {
     return d.toLocaleDateString([], { month: "short", day: "numeric" });
   };
 
-  const getInitial = (name) => (name || "?")[0].toUpperCase();
+  const getInitial = (name) =>
+    name ? name[0].toUpperCase() : <img src="/default-avatar.png" alt="" />;
 
   // ───────────────────────────────────────────────────────────
 
