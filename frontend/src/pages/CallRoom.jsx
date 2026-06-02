@@ -22,6 +22,7 @@ export default function CallRoom() {
   const sessionRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const remoteAudioRef = useRef(null);  // alltid til stede, sikrer at lyd alltid spiller
   const durationTimerRef = useRef(null);
 
   // ── Set up the call ─────────────────────────────────────────
@@ -33,9 +34,21 @@ export default function CallRoom() {
       userId: user.id,
       isVideo,
       onRemoteStream: (stream) => {
-        console.log("[Call] onRemoteStream mottatt", stream);
+        console.log("[Call] onRemoteStream mottatt - tracks:",
+          stream.getTracks().map(t => `${t.kind}:${t.enabled}`));
+
+        // Sett stream paa video-element (visning + ev. lyd)
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = stream;
+          remoteVideoRef.current.play().catch(e =>
+            console.warn("[Call] video.play() feilet:", e.message));
+        }
+        // Sett OGSAA paa skjult audio-element - garanterer lyd
+        // selv for audio-only calls eller hvis video-elementet feiler
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = stream;
+          remoteAudioRef.current.play().catch(e =>
+            console.warn("[Call] audio.play() feilet:", e.message));
         }
         setCallState("connected");
         startDurationTimer();
@@ -113,6 +126,10 @@ export default function CallRoom() {
 
   return (
     <div className="call-root">
+
+      {/* Skjult audio-element - sikrer at lyd alltid spilles,
+          uavhengig av om video-elementet finnes (audio-only) eller virker */}
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
 
       {/* Remote video (full screen) */}
       <div className="remote-video-container">
