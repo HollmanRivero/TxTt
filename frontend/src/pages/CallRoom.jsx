@@ -33,6 +33,7 @@ export default function CallRoom() {
       userId: user.id,
       isVideo,
       onRemoteStream: (stream) => {
+        console.log("[Call] onRemoteStream mottatt", stream);
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = stream;
         }
@@ -40,11 +41,13 @@ export default function CallRoom() {
         startDurationTimer();
       },
       onStateChange: (state) => {
+        console.log("[Call] WebRTC state ->", state);
         if (state === "connected") setCallState("connected");
-        if (state === "ended") {
+        if (state === "ended" || state === "failed" || state === "closed") {
           stopDurationTimer();
           setCallState("ended");
-          setTimeout(() => navigate(`/chat/${conversationId}`), 1500);
+          // Lengre delay (3s) saa du ser hva som skjedde foer det navigerer bort
+          setTimeout(() => navigate(`/chat/${conversationId}`), 3000);
         }
       },
     });
@@ -53,16 +56,18 @@ export default function CallRoom() {
 
     const setup = async () => {
       try {
+        console.log("[Call] setup starter - isAnswering:", isAnswering, "isVideo:", isVideo);
         const localStream = isAnswering
           ? await session.answerCall()
           : await session.startCall();
+        console.log("[Call] localStream OK:", localStream);
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = localStream;
         }
       } catch (err) {
-        console.error("Call setup failed:", err);
-        alert("Could not access camera/microphone. Check permissions.");
+        console.error("[Call] setup feilet:", err);
+        alert("Could not start call: " + err.message);
         navigate(`/chat/${conversationId}`);
       }
     };
@@ -70,6 +75,7 @@ export default function CallRoom() {
     setup();
 
     return () => {
+      console.log("[Call] CallRoom unmounter - hangup");
       stopDurationTimer();
       session.hangup();
     };
