@@ -42,14 +42,22 @@ export const startConversation = async (currentUserId, otherUserId) => {
 };
 
 /** Get the auto-delete (retention) setting for a conversation.
- *  Returns the number of hours, or null = never delete. */
+ *  Returns the number of hours, or null = never delete.
+ *  Returnerer null hvis kolonnen ikke finnes (migrasjon 005 ikke kjort). */
 export const getRetention = async (conversationId) => {
   const { data, error } = await supabase
     .from("conversations")
     .select("retention_hours")
     .eq("id", conversationId)
     .single();
-  if (error) throw error;
+  if (error) {
+    // 42703 = "column does not exist" - migrasjon 005 ikke kjort enda
+    if (error.code === "42703") {
+      console.warn("[retention] Kolonnen retention_hours mangler - kjor migrasjon 005");
+      return null;
+    }
+    throw error;
+  }
   return data.retention_hours;
 };
 
@@ -60,7 +68,12 @@ export const setRetention = async (conversationId, hours) => {
     .from("conversations")
     .update({ retention_hours: hours })
     .eq("id", conversationId);
-  if (error) throw error;
+  if (error) {
+    if (error.code === "42703") {
+      throw new Error("Auto-slett er ikke aktivert paa dette prosjektet - kjor SQL-migrasjon 005");
+    }
+    throw error;
+  }
 };
 
 // ── Messages ──────────────────────────────────────────────────────────────────
