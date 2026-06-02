@@ -12,19 +12,36 @@ export function CallProvider({ children }) {
   const navigate = useNavigate();
   const [incomingCall, setIncomingCall] = useState(null);
 
+  // Logger hver gang incomingCall endrer seg
+  useEffect(() => {
+    console.log("[CallProvider] incomingCall state ->", incomingCall);
+  }, [incomingCall]);
+
   // ── Listen for incoming calls globally ──────────────────────
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      console.log("[CallProvider] useEffect: ingen user, hopper over");
+      return;
+    }
+    console.log("[CallProvider] useEffect: setter opp listener for", user.id);
     const channel = listenForCalls(user.id, (payload) => {
+      console.log("[CallProvider] callback: setIncomingCall(payload)", payload);
       setIncomingCall(payload);
       // Auto-dismiss after 30s if not answered
-      setTimeout(() => setIncomingCall((c) => (c === payload ? null : c)), 30000);
+      setTimeout(() => {
+        console.log("[CallProvider] AUTO-DISMISS timer fyrer (30s gikk)");
+        setIncomingCall((c) => (c === payload ? null : c));
+      }, 30000);
     });
-    return () => supabase.removeChannel(channel);
+    return () => {
+      console.log("[CallProvider] CLEANUP: fjerner kanal");
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   // ── Accept ──────────────────────────────────────────────────
   const acceptCall = () => {
+    console.log("[CallProvider] acceptCall klikket");
     if (!incomingCall) return;
     const { conversationId, callerName, isVideo } = incomingCall;
     setIncomingCall(null);
@@ -34,7 +51,10 @@ export function CallProvider({ children }) {
   };
 
   // ── Decline ─────────────────────────────────────────────────
-  const declineCall = () => setIncomingCall(null);
+  const declineCall = () => {
+    console.log("[CallProvider] declineCall klikket");
+    setIncomingCall(null);
+  };
 
   return (
     <CallContext.Provider value={{ incomingCall }}>
