@@ -37,18 +37,26 @@ export default function CallRoom() {
         console.log("[Call] onRemoteStream mottatt - tracks:",
           stream.getTracks().map(t => `${t.kind}:${t.enabled}`));
 
-        // Sett stream paa video-element (visning + ev. lyd)
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = stream;
-          remoteVideoRef.current.play().catch(e =>
-            console.warn("[Call] video.play() feilet:", e.message));
+        // Sett srcObject KUN hvis den er forskjellig - autoPlay-attributtet
+        // tar seg av play-kall. Manuell play() interfererer og kaster
+        // "interrupted by new load" feil.
+        const v = remoteVideoRef.current;
+        if (v && v.srcObject !== stream) {
+          v.srcObject = stream;
         }
-        // Sett OGSAA paa skjult audio-element - garanterer lyd
-        // selv for audio-only calls eller hvis video-elementet feiler
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = stream;
-          remoteAudioRef.current.play().catch(e =>
-            console.warn("[Call] audio.play() feilet:", e.message));
+        const a = remoteAudioRef.current;
+        if (a && a.srcObject !== stream) {
+          a.srcObject = stream;
+          // Eksplisitt play paa audio-elementet etter en kort delay,
+          // hvis autoPlay ikke trigger (skjer typisk paa Chrome Windows).
+          // AbortError ignoreres - det betyr bare at en annen play() er paa vei.
+          setTimeout(() => {
+            a.play().catch(e => {
+              if (e.name !== "AbortError") {
+                console.warn("[Call] audio.play() feilet:", e.name, e.message);
+              }
+            });
+          }, 100);
         }
         setCallState("connected");
         startDurationTimer();

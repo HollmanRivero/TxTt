@@ -63,10 +63,15 @@ export class CallSession {
       }
     };
 
-    // Receive the remote stream
+    // Receive the remote stream - dedupe siden ontrack fyrer per track (audio + video)
     this.pc.ontrack = (event) => {
-      console.log("[WebRTC] ontrack - mottok remote stream");
-      this.onRemoteStream?.(event.streams[0]);
+      const stream = event.streams[0];
+      console.log("[WebRTC] ontrack - mottok track:", event.track.kind);
+      if (this._lastRemoteStream === stream) {
+        return; // samme stream som forrige track-kall, hopper over
+      }
+      this._lastRemoteStream = stream;
+      this.onRemoteStream?.(stream);
     };
 
     // Track connection state
