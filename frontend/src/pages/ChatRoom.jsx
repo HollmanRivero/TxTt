@@ -252,7 +252,7 @@ export default function ChatRoom() {
 
             <div className="msg-col">
               {/* Text bubble */}
-              {msg.message_type === "text" && (
+              {(!msg.message_type || msg.message_type === "text") && (
                 <div className={`bubble ${isOwn(msg) ? "bubble-own" : "bubble-other"} ${msg._optimistic ? "optimistic" : ""}`}>
                   {msg.content}
                 </div>

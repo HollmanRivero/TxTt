@@ -48,7 +48,7 @@ export const getMessages = async (conversationId, limit = 50) => {
   const { data, error } = await supabase
     .from("messages")
     .select(`
-      id, content, created_at, sender_id,
+      id, content, created_at, sender_id, message_type, file_url,
       profiles!messages_sender_id_fkey (full_name, username, avatar_url)
     `)
     .eq("conversation_id", conversationId)
@@ -63,7 +63,7 @@ export const getMessages = async (conversationId, limit = 50) => {
 export const sendMessage = async (conversationId, senderId, content) => {
   const { data, error } = await supabase
     .from("messages")
-    .insert({ conversation_id: conversationId, sender_id: senderId, content })
+    .insert({ conversation_id: conversationId, sender_id: senderId, content, message_type: "text" })
     .select()
     .single();
 
