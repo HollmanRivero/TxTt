@@ -10,20 +10,28 @@ const ICE_SERVERS = {
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
-    // Multiple TURN-servere - flere endepunkter + TCP for aa komme gjennom strenge firewalls
+    // Open Relay (kan vaere blokkert/overbelastet i visse nettverk)
     {
       urls: [
         "turn:openrelay.metered.ca:80",
         "turn:openrelay.metered.ca:443",
-        "turn:openrelay.metered.ca:80?transport=tcp",
         "turn:openrelay.metered.ca:443?transport=tcp",
         "turns:openrelay.metered.ca:443?transport=tcp",
       ],
       username: "openrelayproject",
       credential: "openrelayproject",
     },
+    // Backup TURN-pool fra Metered's global relay (krever ikke konto, men har lavere kvote)
+    {
+      urls: [
+        "turn:global.relay.metered.ca:80",
+        "turn:global.relay.metered.ca:443",
+        "turns:global.relay.metered.ca:443?transport=tcp",
+      ],
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
   ],
-  // Pre-warm ICE-kandidater for raskere kobling
   iceCandidatePoolSize: 4,
 };
 
@@ -95,11 +103,11 @@ export class CallSession {
         setTimeout(() => {
           if (this.pc?.connectionState === "failed") {
             console.warn("[WebRTC] connection er fortsatt failed etter 8s - hangup");
-            this.hangup();
+            this.hangup("connection_failed_8s");
           }
         }, 8000);
       } else if (state === "closed") {
-        this.hangup();
+        this.hangup("connection_closed");
       }
     };
 
@@ -170,7 +178,8 @@ export class CallSession {
           await this._handleIceCandidate(payload.candidate);
           break;
         case "hangup":
-          this.hangup();
+          console.warn("[WebRTC] mottok hangup-signal fra peer. Aarsak fra peer:", payload.reason);
+          this.hangup("remote_hangup");
           break;
       }
     });
@@ -279,8 +288,11 @@ export class CallSession {
   }
 
   // ── Hang up ─────────────────────────────────────────────────
-  hangup() {
-    this._signal("hangup", {});
+  hangup(reason = "manual") {
+    if (this._hungUp) return;
+    this._hungUp = true;
+    console.warn("[WebRTC] HANGUP kalt - aarsak:", reason);
+    this._signal("hangup", { reason });
     this.localStream?.getTracks().forEach((track) => track.stop());
     this.pc?.close();
     if (this.channel) supabase.removeChannel(this.channel);
