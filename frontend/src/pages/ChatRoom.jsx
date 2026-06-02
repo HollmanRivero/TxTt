@@ -201,9 +201,7 @@ export default function ChatRoom() {
         </button>
         <div className="chat-header-user">
           <div className="avatar sm">
-            {otherUser?.avatar_url
-              ? <img src={otherUser.avatar_url} alt="" />
-              : getInitial(otherUser?.full_name || otherUser?.username)}
+            <img src="/default-avatar.png" alt="" />
           </div>
           <p className="chat-header-name">
             {otherUser?.full_name || otherUser?.username || "…"}
