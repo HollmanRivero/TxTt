@@ -28,27 +28,17 @@ export const getConversations = async (userId) => {
   return data;
 };
 
-/** Start a new conversation with another user */
+/** Start a new conversation with another user.
+ *  Uses the start_conversation() Postgres function so the insert into
+ *  conversations + conversation_members happens atomically with
+ *  security definer privileges (bypasses RLS in a controlled way). */
 export const startConversation = async (currentUserId, otherUserId) => {
-  // Create conversation
-  const { data: conv, error: convErr } = await supabase
-    .from("conversations")
-    .insert({})
-    .select()
-    .single();
-
-  if (convErr) throw convErr;
-
-  // Add both members
-  const { error: membErr } = await supabase
-    .from("conversation_members")
-    .insert([
-      { conversation_id: conv.id, user_id: currentUserId },
-      { conversation_id: conv.id, user_id: otherUserId },
-    ]);
-
-  if (membErr) throw membErr;
-  return conv;
+  const { data, error } = await supabase.rpc("start_conversation", {
+    other_user_id: otherUserId,
+  });
+  if (error) throw error;
+  // The function returns the conversation UUID; shape it like the old return value
+  return { id: data };
 };
 
 // ── Messages ──────────────────────────────────────────────────────────────────
