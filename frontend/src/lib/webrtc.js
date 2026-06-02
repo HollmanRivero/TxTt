@@ -9,22 +9,22 @@ const ICE_SERVERS = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun.cloudflare.com:3478" },
+    // Multiple TURN-servere - flere endepunkter + TCP for aa komme gjennom strenge firewalls
     {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-    {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-    {
-      urls: "turn:openrelay.metered.ca:443?transport=tcp",
+      urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turn:openrelay.metered.ca:80?transport=tcp",
+        "turn:openrelay.metered.ca:443?transport=tcp",
+        "turns:openrelay.metered.ca:443?transport=tcp",
+      ],
       username: "openrelayproject",
       credential: "openrelayproject",
     },
   ],
+  // Pre-warm ICE-kandidater for raskere kobling
+  iceCandidatePoolSize: 4,
 };
 
 /**
@@ -74,12 +74,31 @@ export class CallSession {
       this.onRemoteStream?.(stream);
     };
 
-    // Track connection state
+    // Track connection state - ikke hangup paa "disconnected" siden det
+    // ofte er transient og recoverer av seg selv. Bare "failed" og "closed"
+    // er endelige. Vent 8 sek paa failed for aa gi ICE en sjanse til aa
+    // restarte forbindelsen via TURN.
     this.pc.onconnectionstatechange = () => {
       const state = this.pc.connectionState;
       console.log("[WebRTC] connectionState ->", state);
       this.onStateChange?.(state);
-      if (state === "disconnected" || state === "failed" || state === "closed") {
+
+      if (state === "failed") {
+        console.warn("[WebRTC] connection failed - forsoeker ICE-restart i stedet for hangup");
+        // Prov aa restarte ICE - kan finne ny rute via TURN
+        try {
+          this.pc.restartIce?.();
+        } catch (e) {
+          console.error("[WebRTC] restartIce feilet:", e);
+        }
+        // Hangup som siste utvei etter 8 sekunder hvis fortsatt failed
+        setTimeout(() => {
+          if (this.pc?.connectionState === "failed") {
+            console.warn("[WebRTC] connection er fortsatt failed etter 8s - hangup");
+            this.hangup();
+          }
+        }, 8000);
+      } else if (state === "closed") {
         this.hangup();
       }
     };
