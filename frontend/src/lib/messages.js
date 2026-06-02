@@ -41,6 +41,28 @@ export const startConversation = async (currentUserId, otherUserId) => {
   return { id: data };
 };
 
+/** Get the auto-delete (retention) setting for a conversation.
+ *  Returns the number of hours, or null = never delete. */
+export const getRetention = async (conversationId) => {
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("retention_hours")
+    .eq("id", conversationId)
+    .single();
+  if (error) throw error;
+  return data.retention_hours;
+};
+
+/** Update the auto-delete (retention) setting for a conversation.
+ *  Pass null for "never delete", or 6 / 12 / 24 hours. */
+export const setRetention = async (conversationId, hours) => {
+  const { error } = await supabase
+    .from("conversations")
+    .update({ retention_hours: hours })
+    .eq("id", conversationId);
+  if (error) throw error;
+};
+
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 /** Load messages for a conversation (newest last) */

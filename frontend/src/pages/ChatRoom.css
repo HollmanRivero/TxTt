@@ -325,3 +325,61 @@
 .preview-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .preview-btn.cancel { background: var(--border); color: var(--muted); }
 .preview-btn.send   { background: var(--accent); color: #fff; }
+
+/* ── Retention (auto-delete) menu ─────────────────────────────────── */
+.retention-wrapper {
+  position: relative;
+}
+.retention-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 8px;
+  line-height: 1;
+}
+.retention-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.retention-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 6px 10px 4px;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.retention-option {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 100ms;
+}
+.retention-option:hover { background: rgba(255,255,255,0.06); }
+.retention-option.active {
+  background: rgba(91,143,255,0.16);
+  color: var(--accent);
+  font-weight: 600;
+}

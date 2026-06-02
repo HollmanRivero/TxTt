@@ -4,6 +4,7 @@ import { useAuth } from "../hooks/useAuth";
 import {
   getMessages, sendMessage, subscribeToMessages,
   sendImageMessage, sendAudioMessage,
+  getRetention, setRetention,
 } from "../lib/messages";
 import { supabase } from "../lib/supabase";
 import { inviteToCall } from "../lib/webrtc";
@@ -21,6 +22,8 @@ export default function ChatRoom() {
   const [sending, setSending] = useState(false);
   const [otherUser, setOtherUser] = useState(null);
   const [imagePreview, setImagePreview] = useState(null); // { file, url }
+  const [retentionHours, setRetentionHoursState] = useState(null); // null = never
+  const [retentionMenuOpen, setRetentionMenuOpen] = useState(false);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -41,7 +44,28 @@ export default function ChatRoom() {
       .single()
       .then(({ data }) => setOtherUser(data?.profiles))
       .catch(console.error);
+
+    // Last retention-innstillingen
+    getRetention(conversationId)
+      .then(setRetentionHoursState)
+      .catch(console.error);
   }, [conversationId, user]);
+
+  // ── Endre retention ─────────────────────────────────────────
+  const handleSetRetention = async (hours) => {
+    try {
+      await setRetention(conversationId, hours);
+      setRetentionHoursState(hours);
+      setRetentionMenuOpen(false);
+    } catch (err) {
+      console.error("Failed to set retention:", err);
+    }
+  };
+
+  const retentionLabel = (h) => {
+    if (h === null || h === undefined) return "Never";
+    return `${h}h`;
+  };
 
   // ── Real-time subscription ──────────────────────────────────
   useEffect(() => {
@@ -208,8 +232,46 @@ export default function ChatRoom() {
           </p>
         </div>
 
-        {/* Call buttons */}
+        {/* Call buttons + retention */}
         <div className="chat-header-actions">
+          {/* Auto-delete (retention) */}
+          <div className="retention-wrapper">
+            <button
+              className="icon-btn"
+              onClick={() => setRetentionMenuOpen((o) => !o)}
+              title={`Auto-delete: ${retentionLabel(retentionHours)}`}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+              {retentionHours !== null && retentionHours !== undefined && (
+                <span className="retention-badge">{retentionHours}h</span>
+              )}
+            </button>
+            {retentionMenuOpen && (
+              <div className="retention-menu">
+                <p className="retention-title">Auto-delete messages</p>
+                <button
+                  className={`retention-option ${retentionHours === null ? "active" : ""}`}
+                  onClick={() => handleSetRetention(null)}
+                >Never</button>
+                <button
+                  className={`retention-option ${retentionHours === 6 ? "active" : ""}`}
+                  onClick={() => handleSetRetention(6)}
+                >After 6 hours</button>
+                <button
+                  className={`retention-option ${retentionHours === 12 ? "active" : ""}`}
+                  onClick={() => handleSetRetention(12)}
+                >After 12 hours</button>
+                <button
+                  className={`retention-option ${retentionHours === 24 ? "active" : ""}`}
+                  onClick={() => handleSetRetention(24)}
+                >After 24 hours</button>
+              </div>
+            )}
+          </div>
+
           <button
             className="icon-btn"
             onClick={() => handleStartCall(false)}
