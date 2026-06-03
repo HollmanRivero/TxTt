@@ -43,6 +43,11 @@ export default function CallRoom() {
         const v = remoteVideoRef.current;
         if (v && v.srcObject !== stream) {
           v.srcObject = stream;
+          // Video-elementet er muted (lyd gaar via eget audio-element), saa
+          // dette autoplayer fritt. play() som sikkerhet mot autoplay-policy.
+          v.play().catch(e => {
+            if (e.name !== "AbortError") console.warn("[Call] video.play() feilet:", e.name);
+          });
         }
         const a = remoteAudioRef.current;
         if (a && a.srcObject !== stream) {
@@ -142,7 +147,7 @@ export default function CallRoom() {
       {/* Remote video (full screen) */}
       <div className="remote-video-container">
         {isVideo ? (
-          <video ref={remoteVideoRef} autoPlay playsInline className="remote-video" />
+          <video ref={remoteVideoRef} autoPlay playsInline muted className="remote-video" />
         ) : (
           <div className="audio-call-bg">
             <div className="audio-avatar">
