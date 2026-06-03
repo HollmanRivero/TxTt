@@ -1,39 +1,60 @@
 import { supabase } from "./supabase";
 
 // ── ICE servers ───────────────────────────────────────────────────────────────
-// STUN finner offentlig IP (gratis). TURN relayer trafikk hvis NAT blokkerer
-// direkte peer-to-peer (nodvendig for de fleste hjemmenettverk).
-// Open Relay Project = gratis offentlig TURN, OK for testing.
-// For produksjon: kjor egen Coturn eller bruk Twilio/Metered.
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun.cloudflare.com:3478" },
-    // Open Relay (kan vaere blokkert/overbelastet i visse nettverk)
-    {
-      urls: [
-        "turn:openrelay.metered.ca:80",
-        "turn:openrelay.metered.ca:443",
-        "turn:openrelay.metered.ca:443?transport=tcp",
-        "turns:openrelay.metered.ca:443?transport=tcp",
-      ],
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-    // Backup TURN-pool fra Metered's global relay (krever ikke konto, men har lavere kvote)
-    {
-      urls: [
-        "turn:global.relay.metered.ca:80",
-        "turn:global.relay.metered.ca:443",
-        "turns:global.relay.metered.ca:443?transport=tcp",
-      ],
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-  ],
-  iceCandidatePoolSize: 4,
-};
+// Primaert: Metered-konto (paalitelig, dedikerte relay-credentials), hentet
+// dynamisk via API. Fallback: gratis STUN + Open Relay hvis Metered mangler/feiler.
+const METERED_API_URL = import.meta.env.VITE_METERED_API_URL;
+const METERED_API_KEY = import.meta.env.VITE_METERED_API_KEY;
+
+const FALLBACK_ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun.cloudflare.com:3478" },
+  // Open Relay (kan vaere blokkert/overbelastet i visse nettverk)
+  {
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turn:openrelay.metered.ca:443?transport=tcp",
+      "turns:openrelay.metered.ca:443?transport=tcp",
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  // Backup TURN-pool fra Metered's global relay (krever ikke konto, men har lavere kvote)
+  {
+    urls: [
+      "turn:global.relay.metered.ca:80",
+      "turn:global.relay.metered.ca:443",
+      "turns:global.relay.metered.ca:443?transport=tcp",
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+];
+
+let _cachedIceServers = null;
+let _cachedAt = 0;
+
+// Henter ICE-servere fra Metered-kontoen. Cacher i 60 sek. Faller tilbake til
+// gratis STUN/Open Relay hvis nokkel mangler eller API-kallet feiler.
+async function getIceServers() {
+  if (!METERED_API_URL || !METERED_API_KEY) return FALLBACK_ICE_SERVERS;
+  if (_cachedIceServers && Date.now() - _cachedAt < 60000) return _cachedIceServers;
+  try {
+    const res = await fetch(`${METERED_API_URL}?apiKey=${METERED_API_KEY}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const servers = await res.json();
+    // Metered foerst, gratis-pool som ekstra fallback bak
+    const merged = [...servers, ...FALLBACK_ICE_SERVERS];
+    _cachedIceServers = merged;
+    _cachedAt = Date.now();
+    return merged;
+  } catch (err) {
+    console.warn("[WebRTC] Metered TURN feilet, bruker fallback:", err.message);
+    return FALLBACK_ICE_SERVERS;
+  }
+}
 
 /**
  * CallSession manages one WebRTC call.
@@ -58,7 +79,8 @@ export class CallSession {
 
   // ── Set up the peer connection ──────────────────────────────
   async _createPeerConnection() {
-    this.pc = new RTCPeerConnection(ICE_SERVERS);
+    const iceServers = await getIceServers();
+    this.pc = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 4 });
 
     // Send our ICE candidates to the other peer
     this.pc.onicecandidate = (event) => {
