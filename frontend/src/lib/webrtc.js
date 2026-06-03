@@ -93,14 +93,13 @@ export class CallSession {
       }
     };
 
-    // Receive the remote stream - dedupe siden ontrack fyrer per track (audio + video)
+    // Receive the remote stream - kall onRemoteStream for HVER track (audio+video).
+    // Ikke dedupe: et video-element plukker ikke alltid opp en track som legges
+    // til etter at srcObject ble satt, saa vi re-setter srcObject per track.
     this.pc.ontrack = (event) => {
       const stream = event.streams[0];
-      console.log("[WebRTC] ontrack - mottok track:", event.track.kind);
-      if (this._lastRemoteStream === stream) {
-        return; // samme stream som forrige track-kall, hopper over
-      }
-      this._lastRemoteStream = stream;
+      console.log("[WebRTC] ontrack - mottok track:", event.track.kind,
+        "stream tracks:", stream.getTracks().map((t) => t.kind).join(","));
       this.onRemoteStream?.(stream);
     };
 
