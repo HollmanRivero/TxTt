@@ -42,9 +42,11 @@ export default function CallRoom() {
         // "interrupted by new load" feil.
         const v = remoteVideoRef.current;
         if (v && v.srcObject !== stream) {
+          // React's muted-attributt er upaalitelig - sett DOM-propertyen
+          // eksplisitt, ellers blokkerer autoplay-policy en video med audio-track.
+          // Lyd gaar uansett via det dedikerte audio-elementet.
+          v.muted = true;
           v.srcObject = stream;
-          // Video-elementet er muted (lyd gaar via eget audio-element), saa
-          // dette autoplayer fritt. play() som sikkerhet mot autoplay-policy.
           v.play().catch(e => {
             if (e.name !== "AbortError") console.warn("[Call] video.play() feilet:", e.name);
           });
