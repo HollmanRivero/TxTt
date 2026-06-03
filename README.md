@@ -51,7 +51,7 @@ TxTt is a free, offline-first messaging app built as a Progressive Web App (PWA)
 | Backend | Supabase (Postgres, Auth, Realtime, Storage) |
 | Calls | WebRTC (peer-to-peer), Supabase Realtime for signaling |
 | AI assistant | Supabase Edge Function (Deno) proxying the Anthropic API |
-| Hosting | Vercel (frontend), Supabase (backend) |
+| Hosting | Cloudflare Pages (frontend), Supabase (backend) |
 
 ---
 
@@ -156,13 +156,14 @@ supabase functions deploy bot
 
 Without this step the rest of the app works fine, but the in-app bot will return an error.
 
-### 6. Deploy the frontend to Vercel
+### 6. Deploy the frontend to Cloudflare Pages
 
 1. Push to your own GitHub fork
-2. Import the repo into Vercel
-3. **Important:** set **Root Directory** to `frontend` and framework to **Vite**
-4. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under **Environment Variables**
-5. In Supabase: **Authentication → URL Configuration**, add your Vercel production URL so OAuth and password-reset redirects work
+2. In the Cloudflare dashboard: **Workers & Pages → Create → Pages → Connect to Git**, and select the repo
+3. **Important:** set **Root directory** to `frontend`, framework preset to **Vite**, build command `npm run build`, and build output directory `dist`
+4. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under **Settings → Environment variables** (for both Production and Preview)
+5. SPA routing is handled by `frontend/public/_redirects` (`/*  /index.html  200`), which Cloudflare picks up automatically
+6. In Supabase: **Authentication → URL Configuration**, add your `.pages.dev` production URL so OAuth and password-reset redirects work
 
 ---
 
