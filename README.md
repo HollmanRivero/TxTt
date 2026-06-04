@@ -167,6 +167,32 @@ Without this step the rest of the app works fine, but the in-app bot will return
 
 ---
 
+## Using your own Supabase backend (the in-app "READ CAREFULLY" notice)
+
+When someone opens TxTt for the **first time**, before signing up, they see a one-time **"READ CAREFULLY"** notice (and a matching **"Create your own free Supabase backend →"** link on the login screen). Here is what it means and what it does **not** mean:
+
+- TxTt is **free to use**. Every account gets up to **5 GB of storage** on the shared backend run by the Owner — at no cost, no subscription.
+- Anyone who wants **more space and full ownership of their own data** can run TxTt on **their own free Supabase backend**.
+- If they don't want to bother, they simply tap **Continue** and keep using the shared backend (the Owner's credentials). That is completely fine and is the default.
+
+> ⚠️ **Honest expectation-setting:** Creating a Supabase *account* takes ~2 minutes, but actually connecting the app to your own backend is a **one-time developer setup** — there is **no "paste your URL/key" button inside the app today**. The whole backend (database schema, row-level security, optional Edge Function) has to be created once. So in practice almost everyone uses the shared backend; the notice exists to offer the self-hosting option and to make the choice explicit.
+
+### How to set up your own backend
+
+This is the same as the [Getting started](#getting-started) guide above. In short:
+
+1. Create a free Supabase project at **[supabase.com/dashboard/sign-up](https://supabase.com/dashboard/sign-up)**.
+2. Copy your **Project URL** and **anon (publishable) key** from **Project Settings → API**, and note your **project ref** and **database password**.
+3. Put the URL + anon key into `frontend/.env.local` (local) or your Cloudflare Pages **Environment variables** (hosted) — see step 2 and step 6 of *Getting started*.
+4. Apply the database schema: `supabase db push` (creates every table + row-level security policy).
+5. *(Optional)* Deploy the AI assistant Edge Function and set the Anthropic secret (step 5 of *Getting started*).
+
+After that, the app talks **only to your project**, and all data lives in **your** database — nobody else can see it.
+
+> 💡 **Write your details down.** When you create the project, keep your **Project URL**, **anon key**, **database password**, and **project ref** somewhere safe — a **Notepad** file or a **Word** document is perfectly fine. You'll need them again for the steps above and if you ever re-clone the repo.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
