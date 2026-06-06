@@ -3,19 +3,155 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { listenForCalls } from "../lib/webrtc";
 import { supabase } from "../lib/supabase";
+import { registerPushForUser } from "../lib/push";
 import "./IncomingCall.css";
 
 const CallContext = createContext(null);
+
+// ── Delt AudioContext som "låses opp" på første brukertrykk ──────────
+// På Android-WebView/TWA starter en ny AudioContext i "suspended"-modus
+// og kan kun vekkes inne i en brukerhendelse (tap). Når et anrop kommer
+// inn finnes det ingen fersk tap → konteksten forblir suspended → ingen
+// lyd (bare vibrering). Derfor lager vi ÉN delt kontekst og vekker den på
+// første trykk, så den allerede er "varm" når anropet kommer.
+let sharedCtx = null;
+function getAudioCtx() {
+  if (!sharedCtx) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtx) sharedCtx = new AudioCtx();
+  }
+  return sharedCtx;
+}
+
+let audioUnlockInstalled = false;
+function installAudioUnlock() {
+  if (audioUnlockInstalled) return;
+  audioUnlockInstalled = true;
+
+  const unlock = () => {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    // Nesten lydløst "blip" for å varme opp enkelte WebView-er
+    try {
+      const g = ctx.createGain();
+      g.gain.value = 0.0001;
+      const o = ctx.createOscillator();
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start();
+      o.stop(ctx.currentTime + 0.01);
+    } catch {
+      /* ignorer */
+    }
+    window.removeEventListener("pointerdown", unlock);
+    window.removeEventListener("keydown", unlock);
+    window.removeEventListener("touchstart", unlock);
+  };
+
+  window.addEventListener("pointerdown", unlock);
+  window.addEventListener("keydown", unlock);
+  window.addEventListener("touchstart", unlock);
+}
+
+// ── Klassisk "ring-ring" ringetone via Web Audio API ──────────────
+// Ingen lydfil nødvendig. Bruker den delte (opplåste) konteksten og
+// spiller en britisk-stil dobbelt-ring i loop til .stop() kalles.
+// Lukker IKKE konteksten ved stop, så den holder seg varm til neste anrop.
+function createClassicRingtone() {
+  const ctx = getAudioCtx();
+  if (!ctx) return { stop() {} }; // ingen Web Audio-støtte
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+
+  let stopped = false;
+  let loopTimer = null;
+
+  // Spiller én tone (to frekvenser samtidig) fra startTime i gitt varighet
+  const tone = (startTime, duration) => {
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc1.type = "sine";
+    osc2.type = "sine";
+    osc1.frequency.value = 400; // klassisk ringetone
+    osc2.frequency.value = 450;
+
+    // Myk inn/ut for å unngå "klikk"-lyder
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.28, startTime + 0.03);
+    gain.gain.setValueAtTime(0.28, startTime + duration - 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc1.start(startTime);
+    osc2.start(startTime);
+    osc1.stop(startTime + duration);
+    osc2.stop(startTime + duration);
+  };
+
+  // Én syklus = dobbelt-ring + pause, deretter gjenta (ring-ring ... ring-ring)
+  const ringCycle = () => {
+    if (stopped) return;
+    const t = ctx.currentTime;
+    tone(t, 0.4); // ring
+    tone(t + 0.6, 0.4); // ring (0.2s gap mellom de to)
+    loopTimer = setTimeout(ringCycle, 3000); // ~2s stillhet før neste syklus
+  };
+
+  ringCycle();
+
+  return {
+    stop() {
+      stopped = true;
+      if (loopTimer) clearTimeout(loopTimer);
+      // Ikke ctx.close() – behold konteksten varm til neste anrop.
+    },
+  };
+}
 
 export function CallProvider({ children }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [incomingCall, setIncomingCall] = useState(null);
 
+  // ── Lås opp lyd på første brukertrykk (én gang per app-start) ──
+  useEffect(() => {
+    installAudioUnlock();
+  }, []);
+
   // Logger hver gang incomingCall endrer seg
   useEffect(() => {
     console.log("[CallProvider] incomingCall state ->", incomingCall);
   }, [incomingCall]);
+
+  // ── Spill ringetone mens et innkommende anrop vises ─────────
+  // Starter når incomingCall settes, stopper automatisk når det blir null
+  // (svart, avvist eller auto-avvist etter 30s).
+  useEffect(() => {
+    if (!incomingCall) return;
+    console.log("[CallProvider] starter ringetone");
+    const ringtone = createClassicRingtone();
+    return () => {
+      console.log("[CallProvider] stopper ringetone");
+      ringtone.stop();
+    };
+  }, [incomingCall]);
+
+  // ── Registrer enheten for push-varsler (native) ─────────────
+  useEffect(() => {
+    if (!user) return;
+    registerPushForUser(user.id, {
+      onCallTapped: ({ conversationId, callerName, isVideo }) => {
+        navigate(`/call/${conversationId}`, {
+          state: { isVideo, isAnswering: true, callerName },
+        });
+      },
+    });
+  }, [user, navigate]);
 
   // ── Listen for incoming calls globally ──────────────────────
   useEffect(() => {

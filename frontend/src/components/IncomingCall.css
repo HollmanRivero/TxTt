@@ -59,13 +59,6 @@
   50%      { box-shadow: 0 0 0 16px rgba(91,143,255,0); }
 }
 
-.incoming-name {
-  font-family: "Syne", sans-serif;
-  font-size: 1.4rem;
-  font-weight: 700;
-  color: var(--text, #f0f0f5);
-}
-
 .incoming-type {
   font-size: 0.9rem;
   color: var(--muted, #6b6b80);
