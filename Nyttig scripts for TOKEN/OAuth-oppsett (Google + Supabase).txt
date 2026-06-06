@@ -1,0 +1,86 @@
+============================================================
+ TxTt — OAuth-innlogging med Google (via Supabase)
+ Koden er allerede ferdig. Dette er KUN oppsett i nettleseren.
+============================================================
+
+DINE VERDIER (fyll inn etter hvert)
+  Supabase-prosjekt:  lbkhxcfcqtaimccpyuho
+  Callback-URL (Google trenger denne — kopier nøyaktig):
+     https://lbkhxcfcqtaimccpyuho.supabase.co/auth/v1/callback
+  Client ID:      _______________________________
+  Client Secret:  _______________________________
+
+------------------------------------------------------------
+DEL 1 — Lag OAuth-app i Google Cloud Console
+------------------------------------------------------------
+1. Gå til  https://console.cloud.google.com/
+2. Øverst: opprett et prosjekt (f.eks. "TxTt") og velg det.
+3. Meny > "APIs & Services" > "OAuth consent screen"
+   - User Type: External  > Create
+   - App name: TxTt
+   - User support email: din e-post
+   - Developer contact: din e-post
+   - Lagre videre gjennom stegene (Scopes/Test users kan du
+     hoppe over) > Back to dashboard
+4. Meny > "APIs & Services" > "Credentials"
+   - "+ CREATE CREDENTIALS" > "OAuth client ID"
+   - Application type: "Web application"
+   - Name: TxTt Web
+   - Under "Authorized redirect URIs" > "+ ADD URI", lim inn:
+        https://lbkhxcfcqtaimccpyuho.supabase.co/auth/v1/callback
+   - Create
+5. En boks viser "Client ID" og "Client secret".
+   Kopier begge inn øverst i denne fila.
+
+------------------------------------------------------------
+DEL 2 — Legg inn i Supabase
+------------------------------------------------------------
+1. Gå til  https://supabase.com/dashboard  > velg prosjektet
+   (lbkhxcfcqtaimccpyuho)
+2. Venstre meny: Authentication > Providers (Sign In / Up)
+3. Finn "Google" > slå PÅ "Enable Sign in with Google"
+4. Lim inn Client ID og Client Secret fra Del 1 > Save
+5. Mens du er her: Authentication > URL Configuration
+   - Site URL: adressen appen kjører på, f.eks.
+       https://txtt.pages.dev   (din Cloudflare Pages-URL)
+       eller http://localhost:5173 ved lokal testing
+   - Redirect URLs: legg til samme + "/auth/callback", f.eks.
+       https://txtt.pages.dev/auth/callback
+       http://localhost:5173/auth/callback
+   (Dette er appens egen callback — koden bruker
+    `${window.location.origin}/auth/callback`.)
+
+------------------------------------------------------------
+DEL 3 — PUBLISER (så alle kan logge inn, ikke bare deg)
+------------------------------------------------------------
+Så lenge samtykkeskjermen står i "Testing" kan bare test-
+brukere du har lagt til logge inn, og økten varer kort.
+For å åpne for alle:
+1. Google Cloud Console > "OAuth consent screen"
+2. Under "Publishing status": trykk "PUBLISH APP" >
+   bekreft "Confirm"
+3. Status blir "In production".
+   - For BARE Google-pålogging (e-post, profil, navn) trenger
+     du IKKE Google-verifisering — det fungerer med en gang.
+   - Verifisering kreves bare hvis du senere ber om sensitive
+     scopes (Gmail, Drive osv.), som TxTt ikke gjør.
+
+------------------------------------------------------------
+TEST
+------------------------------------------------------------
+1. Start appen lokalt:
+     cd ~/Documents/GitHub/TxTt2.05.10/TxTt/frontend
+     npm install && npm run dev
+2. Åpne http://localhost:5173 > trykk "Logg inn med Google".
+3. Du skal sendes til Google, godkjenne, og komme tilbake
+   innlogget. Sjekk Supabase > Authentication > Users — din
+   bruker skal dukke opp der.
+
+------------------------------------------------------------
+APPLE (valgfritt — vanskeligere)
+------------------------------------------------------------
+Koden har også signInWithApple, men "Sign in with Apple"
+krever betalt Apple Developer-konto (~99 USD/år) for å lage
+Service ID + nøkkel. Hopp over dette med mindre du trenger det.
+Bruk samme callback-URL i Apple-oppsettet:
+   https://lbkhxcfcqtaimccpyuho.supabase.co/auth/v1/callback

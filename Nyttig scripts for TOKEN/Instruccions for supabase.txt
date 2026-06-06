@@ -1,0 +1,36 @@
+﻿Ha noe å skrive notater med enten Notis blokk eller et eller annet WORD eller LIBREOFFICE to write down your own TOKEN and URL redirect and everything about this project. This document you should keep in anothere folder. Hvis du syns det er vanskelig så er det ikke mye som skal til. Bare gjør dette step-by-step så skal du nok greie deg og da har du 5000GB å boltre deg på.
+Skap en fil som heter .env.local i Visual Studio Code eller notes/notebook(Mac/Windows) en TXT fil liksom. Du skal bruke et script med Powershell. Den heter ´setup-env.ps1´. Med Xcode heter den ’setup-env.sh’. Inne i xcode--> variables skriver du koden så kjører du xcode debug.enkelt!
+
+Her lager du Access token (what the script needs): https://supabase.com/dashboard/account/tokens → Generate new token → copy the sbp_... value to your notebook. You`ll need it later.
+På Mac PC`er må du installere Brew, node.js og powershell(preview).
+Homebrew trenger disse verktøyene for å fungere. Kjør følgende kommando:
+xcode-select –install
+(Følg instruksjonene på skjermen hvis det dukker opp et vindu som ber deg installere)
+
+så
+Lim inn denne kommandoen i terminalen og trykk Enter:
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+Tips underveis: Installasjonen vil be deg skrive inn Mac-passordet ditt (skjermen viser ikke tegn mens du skriver, men det registreres). Underveis vil den også be deg trykke på Enter for å bekrefte at du vil laste ned og installere.
+
+Legg Homebrew til i zsh-profilen din
+Når installasjonen er fullført, må du fortelle zsh-skallet ditt hvor Brew er lagret, ellers vil du få feilmeldingen zsh: command not found: brew. [1, 2]
+Kjør denne kommandoen
+Sjekk at alt fungerer
+For å verifisere at installasjonen er vellykket og at zsh nå gjenkjenner Brew, skriv:
+brew doctor
+Hvis alt er i orden, vil du få meldingen: Your system is ready to brew. [1, 2, 3]
+-----------------------------------------------------------------------------
+kjør: brew install git
+
+To run Option B on Mac:
+    1. Put setup-env.sh in the app's root folder. Where you installed it. 
+    2. Open Terminal, cd into that folder (type cd , drag the folder in, Enter). 
+    3. Run:
+bash setup-env.sh -- er command du skal kjøre etter du har kopiert filen
+det skal se sånn ut. Skriv det på notatblokken din eller i ei tekstbehandlingsprogram så du husker. Jeg legger ved de to filene ved siden av.
+
+SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=${ANON_KEY:0:12}..."
+
+VITE_SUPABASE_ANON_KEY = ${ANON_KEY:0:12}..."
