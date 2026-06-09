@@ -41,7 +41,7 @@ export default function ChatRoom() {
       .select("profiles!conversation_members_user_id_fkey(id, full_name, username, avatar_url)")
       .eq("conversation_id", conversationId)
       .neq("user_id", user?.id)
-      .single()
+      .maybeSingle()
       .then(({ data }) => setOtherUser(data?.profiles))
       .catch(console.error);
 

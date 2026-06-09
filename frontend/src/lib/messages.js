@@ -137,24 +137,30 @@ export const searchUsers = async (query) => {
   return data;
 };
 
-/** Get a single profile */
+/** Get a single profile.
+ *  Bruker maybeSingle() i stedet for single(): returnerer null (ikke feil)
+ *  hvis raden mangler enda - f.eks. for nye Google-brukere som ikke har
+ *  lagret profilen sin enno. Slipper rod konsoll-feil ved forste innlogging. */
 export const getProfile = async (userId) => {
   const { data, error } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", userId)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
-  return data;
+  return data; // kan vaere null hvis ingen rad finnes enda
 };
 
-/** Update current user's profile */
+/** Create-or-update the current user's profile.
+ *  Bruker upsert i stedet for update, slik at raden OPPRETTES hvis den
+ *  mangler (f.eks. ved forste innlogging med Google OAuth der ingen
+ *  profiles-rad ble laget). Loser feilen
+ *  "Cannot coerce the result to a single JSON object". */
 export const updateProfile = async (userId, updates) => {
   const { data, error } = await supabase
     .from("profiles")
-    .update(updates)
-    .eq("id", userId)
+    .upsert({ id: userId, ...updates }, { onConflict: "id" })
     .select()
     .single();
 

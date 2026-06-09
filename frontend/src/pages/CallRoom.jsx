@@ -18,12 +18,14 @@ export default function CallRoom() {
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(!isVideo);
   const [duration, setDuration] = useState(0);
+  const [remoteTick, setRemoteTick] = useState(0); // bumpes per ankommende remote-track
 
   const sessionRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const remoteAudioRef = useRef(null);  // alltid til stede, sikrer at lyd alltid spiller
   const durationTimerRef = useRef(null);
+  const remoteStreamRef = useRef(null); // siste remote MediaStream
 
   // ── Set up the call ─────────────────────────────────────────
   useEffect(() => {
@@ -35,36 +37,24 @@ export default function CallRoom() {
       isVideo,
       onRemoteStream: (stream) => {
         console.log("[Call] onRemoteStream mottatt - tracks:",
-          stream.getTracks().map(t => `${t.kind}:${t.enabled}`));
+          stream.getTracks().map((t) => `${t.kind}:${t.enabled}`));
 
-        // Sett srcObject KUN hvis den er forskjellig - autoPlay-attributtet
-        // tar seg av play-kall. Manuell play() interfererer og kaster
-        // "interrupted by new load" feil.
-        // Sett srcObject + play paa nytt for HVER track (kalles per audio/video).
-        const v = remoteVideoRef.current;
-        if (v) {
-          // Video muted (lyd gaar via eget audio-element), saa den autoplayer fritt.
-          // muted settes som DOM-property - JSX-attributtet er upaalitelig i React.
-          v.muted = true;
-          v.srcObject = stream;
-          v.play().catch(e => {
-            if (e.name !== "AbortError") console.warn("[Call] video.play():", e.name);
-          });
-        }
-        const a = remoteAudioRef.current;
-        if (a) {
-          a.srcObject = stream;
-          a.play().catch(e => {
-            if (e.name !== "AbortError") console.warn("[Call] audio.play():", e.name);
-          });
-        }
+        // Lagre streamen og re-attach via en effect (kjorer ETTER render, saa
+        // <video>/<audio> garantert finnes). Hver ny track bumper tick -> effekten
+        // re-setter srcObject, slik at Android WebView plukker opp video-tracken
+        // som ankommer etter audio-tracken.
+        remoteStreamRef.current = stream;
+        setRemoteTick((t) => t + 1);
         setCallState("connected");
         startDurationTimer();
       },
       onStateChange: (state) => {
         console.log("[Call] WebRTC state ->", state);
         if (state === "connected") setCallState("connected");
-        if (state === "ended" || state === "failed" || state === "closed") {
+        // Ikke naviger bort paa "failed" - webrtc.js forsoeker ICE-restart i opptil
+        // 8 sek og kaller selv hangup ("ended") hvis det fortsatt feiler. Aa rive
+        // ned her ville drepe forbindelsen foer restarten fikk virke.
+        if (state === "ended" || state === "closed") {
           stopDurationTimer();
           setCallState("ended");
           // Lengre delay (3s) saa du ser hva som skjedde foer det navigerer bort
@@ -112,6 +102,53 @@ export default function CallRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Fest remote-stream til elementene ETTER render ──────────
+  // Kjorer paa hver remoteTick (ny track ankommer). Re-setting av srcObject
+  // tvinger Android WebView til aa vise en video-track som kom etter audioen,
+  // og effekten kjorer foerst naar elementene faktisk er montert (ingen ref-race).
+  useEffect(() => {
+    const stream = remoteStreamRef.current;
+    if (!stream) return;
+
+    const v = remoteVideoRef.current;
+    if (v) {
+      v.muted = true; // lyd gaar via eget audio-element => fri autoplay
+      v.srcObject = stream;
+      v.play().catch((e) => {
+        if (e.name !== "AbortError") console.warn("[Call] video.play():", e.name);
+      });
+    }
+
+    const a = remoteAudioRef.current;
+    if (a) {
+      a.srcObject = stream;
+      a.play().catch((e) => {
+        if (e.name !== "AbortError") console.warn("[Call] audio.play():", e.name);
+      });
+    }
+  }, [remoteTick]);
+
+  // ── DIAGNOSTIKK: logg inbound audio hvert 2. sek (fjernes senere) ──
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const s = await sessionRef.current?.getAudioStats?.();
+        if (s) {
+          const inn = s.inbound;
+          console.log("[Call][stats] conn:", s.conn, "ice:", s.ice,
+            "| audio bytes:", inn?.bytesReceived ?? "-",
+            "packets:", inn?.packetsReceived ?? "-",
+            "level:", inn?.audioLevel ?? "-");
+        } else {
+          console.log("[Call][stats] ingen pc enda");
+        }
+      } catch (e) {
+        console.warn("[Call][stats] feil:", e?.message ?? e);
+      }
+    }, 2000);
+    return () => clearInterval(id);
+  }, []);
+
   // ── Duration timer ──────────────────────────────────────────
   const startDurationTimer = () => {
     if (durationTimerRef.current) return;
@@ -134,6 +171,13 @@ export default function CallRoom() {
   // ── Controls ────────────────────────────────────────────────
   const handleMute = () => setMuted(sessionRef.current?.toggleMute());
   const handleCamera = () => setCameraOff(sessionRef.current?.toggleCamera());
+  const handleSwitchCamera = async () => {
+    const stream = await sessionRef.current?.switchCamera();
+    // Re-sett lokalt forhaandsbilde til den nye kamera-streamen
+    if (stream && localVideoRef.current) {
+      localVideoRef.current.srcObject = stream;
+    }
+  };
   const handleHangup = () => {
     sessionRef.current?.hangup();
     navigate(`/chat/${conversationId}`);
@@ -146,7 +190,14 @@ export default function CallRoom() {
 
       {/* Skjult audio-element - sikrer at lyd alltid spilles,
           uavhengig av om video-elementet finnes (audio-only) eller virker */}
-      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
+      {/* Off-screen i stedet for display:none - Android WebView spiller ikke
+          av lyd fra et display:none-element. */}
+      <audio
+        ref={remoteAudioRef}
+        autoPlay
+        playsInline
+        style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+      />
 
       {/* Remote video (full screen) */}
       <div className="remote-video-container">
@@ -223,6 +274,21 @@ export default function CallRoom() {
                 <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
               </svg>
             )}
+          </button>
+        )}
+
+        {isVideo && (
+          <button
+            className="call-control-btn"
+            onClick={handleSwitchCamera}
+            title="Switch camera"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M15 7h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3"/>
+              <path d="M8 7l1.5-2h5L16 7"/>
+              <path d="M9.5 13.5a2.5 2.5 0 0 1 4.2-1.8M14.5 14.5a2.5 2.5 0 0 1-4.2 1.8"/>
+              <path d="M13.5 11h1.2v1.2M10.5 17h-1.2v-1.2"/>
+            </svg>
           </button>
         )}
 

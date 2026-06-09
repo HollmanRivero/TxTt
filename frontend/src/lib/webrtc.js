@@ -1,10 +1,10 @@
 import { supabase } from "./supabase";
 
 // ── ICE servers ───────────────────────────────────────────────────────────────
-// Primaert: Metered-konto (paalitelig, dedikerte relay-credentials), hentet
-// dynamisk via API. Fallback: gratis STUN + Open Relay hvis Metered mangler/feiler.
-const METERED_API_URL = import.meta.env.VITE_METERED_API_URL;
-const METERED_API_KEY = import.meta.env.VITE_METERED_API_KEY;
+// Primaert: Cloudflare Realtime TURN, hentet server-side via Supabase Edge
+// Function "turn-credentials" (holder TURN-noekkelen HEMMELIG - den skal ALDRI
+// ligge i frontend-bundlen). Fallback: gratis STUN + Open Relay hvis Edge
+// Function-en mangler secrets eller feiler.
 
 const FALLBACK_ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -21,37 +21,34 @@ const FALLBACK_ICE_SERVERS = [
     username: "openrelayproject",
     credential: "openrelayproject",
   },
-  // Backup TURN-pool fra Metered's global relay (krever ikke konto, men har lavere kvote)
-  {
-    urls: [
-      "turn:global.relay.metered.ca:80",
-      "turn:global.relay.metered.ca:443",
-      "turns:global.relay.metered.ca:443?transport=tcp",
-    ],
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
 ];
 
 let _cachedIceServers = null;
 let _cachedAt = 0;
 
-// Henter ICE-servere fra Metered-kontoen. Cacher i 60 sek. Faller tilbake til
-// gratis STUN/Open Relay hvis nokkel mangler eller API-kallet feiler.
+// Henter ICE-servere fra Cloudflare via "turn-credentials"-Edge Function.
+// Funksjonen leser CF_TURN_KEY_ID + CF_TURN_API_TOKEN fra Supabase-secrets og
+// returnerer Cloudflare sitt { iceServers: [...] }. Cacher i 1 time (credentials
+// varer 24t server-side). Faller tilbake til gratis STUN/Open Relay hvis
+// funksjonen mangler secrets eller feiler.
 async function getIceServers() {
-  if (!METERED_API_URL || !METERED_API_KEY) return FALLBACK_ICE_SERVERS;
-  if (_cachedIceServers && Date.now() - _cachedAt < 60000) return _cachedIceServers;
+  if (_cachedIceServers && Date.now() - _cachedAt < 3600000) return _cachedIceServers;
   try {
-    const res = await fetch(`${METERED_API_URL}?apiKey=${METERED_API_KEY}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const servers = await res.json();
-    // Metered foerst, gratis-pool som ekstra fallback bak
-    const merged = [...servers, ...FALLBACK_ICE_SERVERS];
+    const { data, error } = await supabase.functions.invoke("turn-credentials");
+    if (error) throw error;
+    const cfServers = data?.iceServers;
+    if (!Array.isArray(cfServers) || cfServers.length === 0) {
+      throw new Error("turn-credentials ga ingen iceServers: " + JSON.stringify(data));
+    }
+    // Cloudflare TURN foerst (paalitelig relay), gratis-pool bak som ekstra sikkerhet.
+    const merged = [...cfServers, ...FALLBACK_ICE_SERVERS];
     _cachedIceServers = merged;
     _cachedAt = Date.now();
+    console.log("[WebRTC] ICE-servere hentet fra Cloudflare turn-credentials:",
+      cfServers.length, "server-grupper");
     return merged;
   } catch (err) {
-    console.warn("[WebRTC] Metered TURN feilet, bruker fallback:", err.message);
+    console.warn("[WebRTC] turn-credentials feilet, bruker fallback:", err?.message ?? err);
     return FALLBACK_ICE_SERVERS;
   }
 }
@@ -73,8 +70,13 @@ export class CallSession {
     this.localStream = null;
     this.channel = null;
     this.isCaller = false;
+    this.facingMode = "user";         // "user" = front, "environment" = bak
     this.lastOffer = null;            // lagres saa caller kan re-sende ved "ready"
-    this.pendingIceCandidates = [];   // buffer ICE-kandidater foer remote description er satt
+    this.pendingIceCandidates = [];   // buffer INNKOMMENDE ICE foer remote description er satt
+    this.pendingOutgoingIce = [];     // buffer caller sine EGNE ICE til callee er paa kanalen
+    this.remotePeerReady = false;     // settes naar callee har meldt "ready"
+    this.localTracksAdded = false;     // true naar getUserMedia + addTrack er ferdig
+    this._lastHandledOfferSdp = null;  // dedup av re-sendte offers
   }
 
   // ── Set up the peer connection ──────────────────────────────
@@ -86,8 +88,19 @@ export class CallSession {
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
         const type = event.candidate.type; // host | srflx | relay
-        console.log("[WebRTC] genererte ICE-kandidat type:", type);
-        this._signal("ice-candidate", { candidate: event.candidate });
+        // Caller abonnerer paa signaling-kanalen FOER callee. Kandidater sendt
+        // foer callee er paa kanalen gaar tapt (broadcast har ingen retention),
+        // saa callee faar aldri caller sin relay-kandidat -> ICE finner aldri et
+        // par -> "failed". Vi buffrer derfor caller sine kandidater til callee
+        // har meldt "ready", og sender dem da samlet (_flushOutgoingIce).
+        if (this.isCaller && !this.remotePeerReady) {
+          this.pendingOutgoingIce.push(event.candidate);
+          console.log("[WebRTC] buffer UTGAAENDE ICE (callee ikke klar) type:", type,
+            "| buffer:", this.pendingOutgoingIce.length);
+        } else {
+          console.log("[WebRTC] genererte ICE-kandidat type:", type);
+          this._signal("ice-candidate", { candidate: event.candidate });
+        }
       } else {
         console.log("[WebRTC] ICE-gathering ferdig (null candidate)");
       }
@@ -152,7 +165,9 @@ export class CallSession {
         noiseSuppression: true,
         autoGainControl: true,
       },
-      video: this.isVideo,
+      // facingMode er en "myk" constraint: paa mobil velger den front/bak,
+      // paa desktop (kun ett kamera) ignoreres den trygt.
+      video: this.isVideo ? { facingMode: this.facingMode } : false,
     });
     // Samtalen kan ha blitt lagt paa (hangup -> this.pc = null) mens getUserMedia
     // ventet - f.eks. ved unmount (React StrictMode i dev). Avbryt rolig i stedet
@@ -165,6 +180,7 @@ export class CallSession {
     this.localStream.getTracks().forEach((track) => {
       this.pc.addTrack(track, this.localStream);
     });
+    this.localTracksAdded = true;
 
     return this.localStream;
   }
@@ -191,11 +207,19 @@ export class CallSession {
 
       switch (payload.type) {
         case "ready":
-          // Mottakeren er paa kanalen - sender (re-)sender offer
-          if (this.isCaller && this.lastOffer) {
+          // Callee er naa paa signaling-kanalen.
+          this.remotePeerReady = true;
+          // Re-send offer KUN hvis vi fortsatt venter paa svar (have-local-offer).
+          // Ellers er vi allerede koblet, og en ny offer-runde ville kastet
+          // "wrong state: stable".
+          if (this.isCaller && this.lastOffer &&
+              this.pc?.signalingState === "have-local-offer") {
             console.log("[WebRTC] caller mottok 'ready' -> re-sender offer");
             this._signal("offer", { offer: this.lastOffer });
           }
+          // Tom bufferen av utgaaende ICE saa callee garantert faar caller sine
+          // kandidater (inkl. relay) - dette er det som faktisk lar ICE koble.
+          this._flushOutgoingIce();
           break;
         case "offer":
           await this._handleOffer(payload.offer);
@@ -250,9 +274,27 @@ export class CallSession {
     return localStream;
   }
 
+  // ── Vent til lokale tracks er lagt til (getUserMedia kan vaere treg) ──
+  async _ensureLocalTracks(timeoutMs = 5000) {
+    const start = Date.now();
+    while (!this.localTracksAdded && this.pc && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
   // ── Handle incoming offer (callee side) ─────────────────────
   async _handleOffer(offer) {
+    if (this._lastHandledOfferSdp === offer.sdp) {
+      console.log("[WebRTC] ignorerer duplikat-offer (samme SDP)");
+      return;
+    }
     if (!this.pc) await this._createPeerConnection();
+    // Ikke lag svaret foer vaare egne tracks er lagt til. Ankommer offeren mens
+    // getUserMedia fortsatt kjorer, ville vi ellers svart UTEN egne media ->
+    // caller faar ingen ontrack (svart bilde / ingen lyd).
+    await this._ensureLocalTracks();
+    if (!this.pc) return; // avbrutt (hangup/unmount) under venting
+    this._lastHandledOfferSdp = offer.sdp;
     console.log("[WebRTC] callee handler offer -> setRemoteDescription");
     await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
     await this._flushPendingIce();
@@ -264,9 +306,27 @@ export class CallSession {
 
   // ── Handle incoming answer (caller side) ────────────────────
   async _handleAnswer(answer) {
+    // Gyldig kun naar vi venter paa svar (have-local-offer). Duplikat-answer fra
+    // en re-sendt offer ankommer ofte etter at vi er stabile -> setRemoteDescription
+    // ville da kastet "wrong state: stable". Ignorer trygt.
+    if (!this.pc || this.pc.signalingState !== "have-local-offer") {
+      console.warn("[WebRTC] ignorerer answer i tilstand:", this.pc?.signalingState);
+      return;
+    }
     console.log("[WebRTC] caller mottok answer -> setRemoteDescription");
     await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
     await this._flushPendingIce();
+  }
+
+  // ── Send caller sine bufrede utgaaende ICE naar callee er klar ──
+  _flushOutgoingIce() {
+    if (this.pendingOutgoingIce.length === 0) return;
+    console.log("[WebRTC] sender", this.pendingOutgoingIce.length,
+      "bufrede utgaaende ICE-kandidater til callee");
+    for (const c of this.pendingOutgoingIce) {
+      this._signal("ice-candidate", { candidate: c });
+    }
+    this.pendingOutgoingIce = [];
   }
 
   // ── Tom ICE-buffer naar remote description er satt ──────────
@@ -316,6 +376,74 @@ export class CallSession {
       return !videoTrack.enabled; // returns true if camera now off
     }
     return false;
+  }
+
+  // ── Switch front/back camera ────────────────────────────────
+  // Henter et nytt kamera med motsatt facingMode og bytter video-sporet
+  // via sender.replaceTrack() - INGEN reforhandling, samtalen holder seg oppe.
+  // Returnerer den oppdaterte localStream (eller null hvis den ikke kunne byttes),
+  // saa CallRoom kan re-sette sitt lokale forhaandsbilde.
+  async switchCamera() {
+    if (!this.isVideo || !this.localStream) return null;
+
+    const prev = this.facingMode;
+    this.facingMode = prev === "user" ? "environment" : "user";
+
+    let newStream;
+    try {
+      newStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: this.facingMode },
+        audio: false,
+      });
+    } catch (err) {
+      // Enheten har trolig bare ett kamera (f.eks. desktop) - rull tilbake.
+      console.warn("[WebRTC] switchCamera feilet, beholder naavaerende kamera:", err.name);
+      this.facingMode = prev;
+      return null;
+    }
+
+    const newVideoTrack = newStream.getVideoTracks()[0];
+    const oldVideoTrack = this.localStream.getVideoTracks()[0];
+
+    // Bevar av/paa-tilstand (hvis kamera var skrudd av med toggleCamera)
+    if (oldVideoTrack) newVideoTrack.enabled = oldVideoTrack.enabled;
+
+    // Bytt sporet motparten mottar - uten reforhandling
+    const sender = this.pc?.getSenders().find((s) => s.track && s.track.kind === "video");
+    if (sender) {
+      try {
+        await sender.replaceTrack(newVideoTrack);
+      } catch (err) {
+        console.error("[WebRTC] replaceTrack feilet:", err);
+        newVideoTrack.stop();
+        this.facingMode = prev;
+        return null;
+      }
+    }
+
+    // Bytt sporet i localStream og stopp det gamle
+    if (oldVideoTrack) {
+      this.localStream.removeTrack(oldVideoTrack);
+      oldVideoTrack.stop();
+    }
+    this.localStream.addTrack(newVideoTrack);
+
+    return this.localStream;
+  }
+
+  // ── Diagnostikk: hent inbound audio-stats ────────────
+  async getAudioStats() {
+    if (!this.pc) return null;
+    const stats = await this.pc.getStats();
+    let inbound = null;
+    stats.forEach((r) => {
+      if (r.type === "inbound-rtp" && (r.kind === "audio" || r.mediaType === "audio")) inbound = r;
+    });
+    return {
+      conn: this.pc.connectionState,
+      ice: this.pc.iceConnectionState,
+      inbound,
+    };
   }
 
   // ── Hang up ─────────────────────────────────────────────────

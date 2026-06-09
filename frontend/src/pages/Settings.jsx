@@ -34,11 +34,13 @@ export default function Settings() {
     if (!user) return;
     getProfile(user.id)
       .then((p) => {
-        setProfile(p);
-        setFullName(p.full_name || "");
-        setUsername(p.username || "");
-        setEmail(user.email || p.email || "");
-        setPhone(user.phone || p.phone || "");
+        // p kan vaere null for nye brukere uten lagret profil enda
+        const prof = p || {};
+        setProfile(prof);
+        setFullName(prof.full_name || "");
+        setUsername(prof.username || "");
+        setEmail(user.email || prof.email || "");
+        setPhone(user.phone || prof.phone || "");
       })
       .catch(console.error)
       .finally(() => setLoading(false));
