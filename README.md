@@ -219,3 +219,4 @@ For licensing inquiries, contact the email below.
 
 Salazar Rivero Smart Things
 hollman.rivero@bygg-salazar.no
+Write to me and i`ll make you an own LICeNse. ok? it´s as simple as that.
