@@ -1,0 +1,111 @@
+================================================================
+ BYTT-SUPABASE.txt - Oppskrift: flytte TxTt til nytt Supabase-prosjekt
+ (f.eks. hvis lagringskvoten i det gamle er brukt opp)
+ Sist oppdatert: 12. juni 2026
+================================================================
+
+LES FoeRST - TO VIKTIGE TING:
+
+A) ALT INNHOLD BLIR BORTE ved bytte: brukere, samtaler, meldinger og
+   opplastede filer flyttes IKKE automatisk. Alle maa registrere seg
+   paa nytt i det nye prosjektet. Vurder foerst om det er enklere aa
+   oppgradere planen eller slette gamle filer/meldinger i det gamle
+   prosjektet (Database -> Storage -> rydd).
+
+B) GJoeR STEG 1 MENS DU FORTSATT HAR DET GAMLE PROSJEKTET!
+   Funksjonen start_conversation ligger IKKE i migrasjonsfilene
+   (den gikk tapt ved forrige nullstilling ogsaa). Hent den ut naa:
+   - Gamle prosjektet -> SQL Editor -> kjoer:
+       select pg_get_functiondef('public.start_conversation'::regproc);
+   - Kopier hele resultatet og lagre det som ny fil:
+       supabase\migrations\009_start_conversation.sql
+   Da er den trygg for alltid.
+
+----------------------------------------------------------------
+STEG 1: NYTT SUPABASE-PROSJEKT
+----------------------------------------------------------------
+- supabase.com -> logg inn (hvilken som helst e-postkonto funker)
+  -> New project. Velg region naer Norge (eu-north/eu-central).
+- Noter PROJECT URL    (Settings -> API Keys: https://XXXX.supabase.co)
+- Lag ny PUBLISHABLE KEY samme sted (sb_publishable_...)
+
+----------------------------------------------------------------
+STEG 2: DATABASEN
+----------------------------------------------------------------
+- Nye prosjektet -> SQL Editor
+- Kjoer migrasjonsfilene fra C:\TxTt2.05.10\TxTt\supabase\migrations\
+  i REKKEFoeLGE (lim inn innholdet, en av gangen, Run):
+    001_messaging.sql
+    002_media.sql
+    003_away_mode.sql
+    004_whatsapp.sql
+    005_retention.sql
+    006_fix_members_read.sql
+    007_device_tokens.sql
+    008_isConversation.sql
+    009_start_conversation.sql   (den du lagde i "LES FoeRST" punkt B!)
+
+----------------------------------------------------------------
+STEG 3: INNLOGGING (AUTH)
+----------------------------------------------------------------
+- Authentication -> Sign In / Up -> Google: skru paa, lim inn
+  Client ID + Client Secret (samme som foer, fra Google Cloud Console
+  -> APIs & Services -> Credentials).
+- VIKTIG: i Google Cloud Console maa OAuth-klienten faa det NYE
+  prosjektets callback som godkjent redirect URI:
+      https://XXXX.supabase.co/auth/v1/callback
+  (XXXX = nye prosjekt-referansen)
+- Authentication -> URL Configuration:
+    Site URL:       https://txtt-app.pages.dev
+    Redirect URLs:  http://localhost:5173/**
+                    https://txtt-app.pages.dev/**
+- E-post-OTP er paa som standard. Bruker dere SMS: legg inn
+  Twilio-noeklene under Auth -> Providers -> Phone.
+
+----------------------------------------------------------------
+STEG 4: EDGE FUNCTIONS + SECRETS
+----------------------------------------------------------------
+- Edge Functions -> Deploy a new function -> via Editor.
+  Lag og lim inn fra C:\TxTt2.05.10\TxTt\supabase\Functions\:
+    turn-credentials   (skru AV "Verify JWT" paa denne!)
+    notify-call
+    bot                (hvis dere bruker boten)
+- Edge Functions -> Secrets, legg inn:
+    CF_TURN_KEY_ID      = Key ID fra Cloudflare TURN-noekkelen
+    CF_TURN_API_TOKEN   = API-tokenen til samme noekkel
+    FCM_SERVICE_ACCOUNT = hele JSON-fila fra Firebase
+  MERK: Cloudflare- og Firebase-noeklene er IKKE knyttet til
+  Supabase-prosjektet - de samme verdiene som foer kan gjenbrukes.
+  (Ikke roter dem her med mindre de er paa avveie.)
+
+----------------------------------------------------------------
+STEG 5: SELVE APPEN (eneste stedet i koden som endres!)
+----------------------------------------------------------------
+- Rediger C:\TxTt2.05.10\TxTt\frontend\.env.local:
+    VITE_SUPABASE_URL=https://XXXX.supabase.co
+    VITE_SUPABASE_ANON_KEY=sb_publishable_NYNoeKKEL
+  Det er ALT. Resten av koden leser disse to verdiene.
+
+----------------------------------------------------------------
+STEG 6: BYGG OG FAA ALLE PAA NETT IGJEN
+----------------------------------------------------------------
+Noeklene bakes inn ved bygging, saa baade web og APK maa bygges paa nytt:
+
+1) Web:  cd /d C:\TxTt2.05.10\TxTt\frontend
+         npm run dev      -> test innlogging + anrop lokalt foerst!
+         npm run build    -> deploy dist-mappen til Cloudflare Pages
+2) APK:  build-android.bat -> del apk-output\TxTt-debug.apk med ALLE
+         brukerne. Den gamle APK-en slutter aa virke (gammel noekkel
+         innbakt), saa alle MAA installere den nye.
+3) Alle registrerer seg paa nytt og legger til kontaktene sine igjen.
+
+----------------------------------------------------------------
+SJEKKLISTE TIL SLUTT
+----------------------------------------------------------------
+[ ] Google-innlogging virker paa localhost:5173
+[ ] Anrop kobler til ("ICE-servere hentet fra Cloudflare
+    turn-credentials" + "connectionState -> connected" i F12)
+[ ] Push-varsel med lyd naar appen er lukket (ny APK, logget inn)
+[ ] txtt-app.pages.dev virker etter deploy
+[ ] Gamle prosjektet: slett det, ELLER behold det en stund som arkiv
+================================================================
