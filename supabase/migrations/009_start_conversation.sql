@@ -2,77 +2,57 @@
 --  009_start_conversation.sql
 --  start_conversation(other_user_id) -> uuid
 --
---  REKONSTRUKSJON (12. juni 2026): originalen ble aldri lagret som
---  fil og kildekoden gikk tapt i dataangrepet. Skrevet paa nytt ut
---  fra kallstedet i frontend/src/lib/messages.js (startConversation).
+--  ORIGINALEN, hentet ordrett ut av produksjonsdatabasen 12. juni
+--  2026 med pg_get_functiondef (etter at kildekoden gikk tapt i
+--  dataangrepet og fila aldri hadde vaert lagret).
 --
---  MERK: Den opprinnelige versjonen kjoerer fortsatt i det naavaerende
---  Supabase-prosjektet. IKKE kjoer denne fila der (den ville overskrive
---  den som virker) - den er backup for NYE prosjekter. Vil du heller
---  arkivere den ekte versjonen, kjoer i SQL Editor:
---    select pg_get_functiondef('public.start_conversation'::regproc);
---  og erstatt innholdet her med resultatet.
---
---  Oppfoersel:
---   - Krever innlogget bruker (auth.uid()).
---   - Gjenbruker eksisterende 1:1-samtale mellom de to brukerne
---     hvis den finnes (hindrer duplikater).
---   - Ellers: oppretter conversations-rad + begge medlemmene
---     atomisk, med security definer slik at insert-en gaar klar av
---     RLS paa kontrollert vis (samme grunn som naevnt i messages.js).
+--  Brukes av startConversation i frontend/src/lib/messages.js.
+--  Security definer slik at insert-ene gaar klar av RLS paa
+--  kontrollert vis. Gjenbruker eksisterende samtale der begge er
+--  medlemmer; ellers opprettes samtale + begge medlemmer atomisk.
 -- ─────────────────────────────────────────────────────────────
 
-create or replace function public.start_conversation(other_user_id uuid)
-returns uuid
-language plpgsql
-security definer
-set search_path = public
-as $$
+CREATE OR REPLACE FUNCTION public.start_conversation(other_user_id uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 declare
-  me   uuid := auth.uid();
-  conv uuid;
+  me uuid := auth.uid();
+  existing_id uuid;
+  new_id uuid;
 begin
   if me is null then
-    raise exception 'ikke autentisert';
+    raise exception 'Not authenticated';
   end if;
-  if other_user_id is null then
-    raise exception 'other_user_id mangler';
-  end if;
-  if other_user_id = me then
-    raise exception 'kan ikke starte samtale med deg selv';
-  end if;
-  if not exists (select 1 from public.profiles where id = other_user_id) then
-    raise exception 'brukeren finnes ikke';
+  if other_user_id is null or other_user_id = me then
+    raise exception 'Invalid other_user_id';
   end if;
 
-  -- Finnes det allerede en 1:1-samtale med akkurat disse to? Gjenbruk den.
-  select cm1.conversation_id
-    into conv
-  from public.conversation_members cm1
-  join public.conversation_members cm2
-    on  cm2.conversation_id = cm1.conversation_id
-    and cm2.user_id = other_user_id
+  -- Finn en eksisterende samtale der begge er medlemmer
+  select cm1.conversation_id into existing_id
+  from conversation_members cm1
+  join conversation_members cm2
+    on cm1.conversation_id = cm2.conversation_id
   where cm1.user_id = me
-    and (
-      select count(*) from public.conversation_members c
-      where c.conversation_id = cm1.conversation_id
-    ) = 2
+    and cm2.user_id = other_user_id
   limit 1;
 
-  if conv is not null then
-    return conv;
+  if existing_id is not null then
+    return existing_id;
   end if;
 
-  insert into public.conversations default values
-  returning id into conv;
+  -- Opprett ny samtale + legg til begge medlemmer
+  insert into conversations default values returning id into new_id;
+  insert into conversation_members (conversation_id, user_id)
+  values (new_id, me), (new_id, other_user_id);
 
-  insert into public.conversation_members (conversation_id, user_id)
-  values (conv, me), (conv, other_user_id);
-
-  return conv;
+  return new_id;
 end;
-$$;
+$function$;
 
--- Kun innloggede brukere skal kunne kalle den
+-- Tilgangsstyring (pg_get_functiondef tar ikke med grants; funksjonen
+-- avviser uansett uinnloggede selv via auth.uid()-sjekken over).
 revoke all on function public.start_conversation(uuid) from public;
 grant execute on function public.start_conversation(uuid) to authenticated;
