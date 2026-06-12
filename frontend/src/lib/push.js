@@ -35,13 +35,17 @@ export function registerPushForUser(userId, handlers = {}) {
 
       // Kanalen FCM-payloaden i notify-call peker paa. Importance 5 =
       // heads-up med lyd, ogsaa naar appen er i bakgrunnen/lukket.
+      // Merk: ingen "sound"-parameter -> Android bruker standard varsellyd.
+      // ("sound" forventer en lydfil bundlet i appen, IKKE verdien "default".)
+      // Kanal-id-en har v2-suffiks fordi Android laaser kanalinnstillinger ved
+      // foerste opprettelse - en frisk id var eneste maate aa faa lyd inn paa
+      // enheter der den gamle kanalen alt var opprettet uten lyd.
       await PushNotifications.createChannel({
-        id: "incoming_calls",
+        id: "incoming_calls_v2",
         name: "Innkommende anrop",
         description: "Varsler om innkommende tale- og videoanrop",
         importance: 5,
         visibility: 1,
-        sound: "default",
         vibration: true,
       });
 

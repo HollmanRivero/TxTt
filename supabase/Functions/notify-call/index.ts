@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
           },
           android: {
             priority: "high",
-            notification: { channel_id: "incoming_calls", sound: "default" },
+            notification: { channel_id: "incoming_calls_v2", sound: "default" },
           },
         },
       };
