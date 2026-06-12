@@ -4,7 +4,8 @@ setlocal enabledelayedexpansion
 REM ============================================================
 REM  build-android.bat  -  TxTt-Android (Capacitor) APK-bygg
 REM  Legg i PROSJEKTROTEN (samme mappe som package.json + android\).
-REM  Ordner Java (JDK) OG Android SDK automatisk.
+REM  Ordner Java (JDK) OG Android SDK automatisk - kan ogsaa
+REM  installere JDK for deg via winget hvis den mangler.
 REM  Resultat:  apk-output\TxTt-debug.apk
 REM ============================================================
 
@@ -22,20 +23,31 @@ if errorlevel 1 goto :fail
 
 echo.
 echo [3/5] Forbereder Java (JDK)...
+
+REM En JAVA_HOME som peker paa en slettet installasjon (f.eks. etter
+REM Windows-reinstallasjon) skal ignoreres, ikke stoppe bygget.
+if defined JAVA_HOME if not exist "%JAVA_HOME%\bin\java.exe" (
+  echo Merk: JAVA_HOME peker paa noe som ikke finnes - ignorerer den.
+  set "JAVA_HOME="
+)
+
+call :find_jdk
+
 if not defined JAVA_HOME (
-  for %%J in (
-    "%ProgramFiles%\Android\Android Studio\jbr"
-    "%ProgramFiles%\Android\Android Studio\jre"
-    "%LOCALAPPDATA%\Programs\Android Studio\jbr"
-    "%LOCALAPPDATA%\Programs\Android Studio\jre"
-    "%ProgramFiles%\Java\jdk-17"
-    "%ProgramFiles%\Eclipse Adoptium\jdk-17"
-  ) do (
-    if not defined JAVA_HOME if exist "%%~J\bin\java.exe" set "JAVA_HOME=%%~J"
+  echo.
+  echo Fant ingen Java/JDK paa maskinen.
+  echo Jeg kan installere Microsoft OpenJDK 21 automatisk med winget.
+  set /p SVAR="Installere JDK 21 naa? (J/N): "
+  if /i "!SVAR!"=="J" (
+    winget install --id Microsoft.OpenJDK.21 -e --accept-source-agreements --accept-package-agreements
+    call :find_jdk
   )
 )
+
 if not defined JAVA_HOME (
-  echo FEIL: Fant ingen Java/JDK. Aapne i Android Studio: npx cap open android
+  echo FEIL: Fortsatt ingen JDK. Installer Android Studio
+  echo   ^(https://developer.android.com/studio^) - den har JDK innebygd -
+  echo   eller kjor: winget install Microsoft.OpenJDK.21
   goto :fail
 )
 echo Bruker JAVA_HOME=!JAVA_HOME!
@@ -43,21 +55,39 @@ set "PATH=!JAVA_HOME!\bin;!PATH!"
 
 echo.
 echo [4/5] Sjekker Android SDK (local.properties)...
+
+REM En local.properties fra foer reinstallasjonen kan peke paa en SDK
+REM som ikke finnes lenger - da maa den skrives paa nytt.
 if exist "android\local.properties" (
-  echo local.properties finnes allerede - bruker den.
-) else (
-  call :find_sdk
-  if not defined ANDROID_SDK (
-    echo FEIL: Fant ikke Android SDK.
-    echo   Aapne Android Studio -^> SDK Manager og installer en SDK-plattform,
-    echo   eller sjekk stien under Settings -^> Android SDK og lag
-    echo   android\local.properties manuelt: sdk.dir=^<sti med skraastrek frem^>
-    goto :fail
+  set "SDK_DIR="
+  for /f "usebackq tokens=1,* delims==" %%A in ("android\local.properties") do (
+    if /i "%%A"=="sdk.dir" set "SDK_DIR=%%B"
   )
-  set "SDK_FWD=!ANDROID_SDK:\=/!"
-  > "android\local.properties" echo sdk.dir=!SDK_FWD!
-  echo Skrev android\local.properties -^> sdk.dir=!SDK_FWD!
+  if defined SDK_DIR (
+    set "SDK_CHK=!SDK_DIR:/=\!"
+    set "SDK_CHK=!SDK_CHK:\:=:!"
+    if exist "!SDK_CHK!\platform-tools" (
+      echo local.properties peker paa gyldig SDK - bruker den.
+      goto :sdk_ok
+    )
+  )
+  echo local.properties peker paa en SDK som ikke finnes - lager ny.
+  del "android\local.properties"
 )
+
+call :find_sdk
+if not defined ANDROID_SDK (
+  echo FEIL: Fant ikke Android SDK.
+  echo   Installer Android Studio ^(https://developer.android.com/studio^),
+  echo   aapne den en gang og la SDK Manager installere standardkomponentene.
+  echo   SDK-en havner normalt i: %%LOCALAPPDATA%%\Android\Sdk
+  goto :fail
+)
+set "SDK_FWD=!ANDROID_SDK:\=/!"
+> "android\local.properties" echo sdk.dir=!SDK_FWD!
+echo Skrev android\local.properties -^> sdk.dir=!SDK_FWD!
+
+:sdk_ok
 
 echo.
 echo [5/5] Bygger APK med Gradle (assembleDebug)...
@@ -88,6 +118,31 @@ echo.
 pause
 exit /b 0
 
+REM ── Leter etter JDK paa alle vanlige steder ──────────────────
+:find_jdk
+if defined JAVA_HOME goto :eof
+REM Android Studio sin innebygde JDK (vanligste kilde)
+for %%J in (
+  "%ProgramFiles%\Android\Android Studio\jbr"
+  "%ProgramFiles%\Android\Android Studio\jre"
+  "%LOCALAPPDATA%\Programs\Android Studio\jbr"
+  "%LOCALAPPDATA%\Programs\Android Studio\jre"
+) do (
+  if not defined JAVA_HOME if exist "%%~J\bin\java.exe" set "JAVA_HOME=%%~J"
+)
+if defined JAVA_HOME goto :eof
+REM Frittstaaende JDK-er (alle versjoner/leverandoerer, nyeste vinner)
+for /d %%D in (
+  "%ProgramFiles%\Microsoft\jdk*"
+  "%ProgramFiles%\Eclipse Adoptium\jdk*"
+  "%ProgramFiles%\Java\jdk*"
+  "%ProgramFiles%\Amazon Corretto\jdk*"
+) do (
+  if exist "%%~D\bin\java.exe" set "JAVA_HOME=%%~D"
+)
+goto :eof
+
+REM ── Leter etter Android SDK ──────────────────────────────────
 :find_sdk
 set "ANDROID_SDK="
 if defined ANDROID_HOME if exist "%ANDROID_HOME%\platform-tools" set "ANDROID_SDK=%ANDROID_HOME%"
