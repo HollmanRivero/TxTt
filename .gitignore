@@ -1,26 +1,36 @@
 # Environment files — NEVER commit these
+cd ~/Documents/GitHub/TxTt2.05.10/TxTt
+
+# Sjekk at disse er i .gitignore (de skal ignorere)
+echo "
+# Byggegenererte filer
+dist/
+frontend/dist/
+android/
+frontend/android/
+frontend/apk-output/
+
+# Avhengigheter
+node_modules/
+frontend/node_modules/
+
+# Miljøvariabler
 .env
 .env.local
 supabase/.env
-node_modules/
-dist/
-.env
-.env.local
+
+# OS-filer
+.DS_Store
+Thumbs.db
+
+# Editor
 .vscode/
 
-
-# Node
-node_modules/
-frontend/dist/
-
-# Supabase CLI local state
+# Temporære filer
 supabase/.temp/
 supabase/.branches/
 
-# OS
-.DS_Store
-Thumbs.dbfrontend/android/
-frontend/apk-output/
+# Lokale skript
 Oppdater.sh
 frontend/.npmrc
-frontend/node_modules/
+" > .gitignore
