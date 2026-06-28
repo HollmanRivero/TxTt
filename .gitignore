@@ -1,0 +1,26 @@
+# Environment files — NEVER commit these
+.env
+.env.local
+supabase/.env
+node_modules/
+dist/
+.env
+.env.local
+.vscode/
+
+
+# Node
+node_modules/
+frontend/dist/
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# OS
+.DS_Store
+Thumbs.dbfrontend/android/
+frontend/apk-output/
+Oppdater.sh
+frontend/.npmrc
+frontend/node_modules/

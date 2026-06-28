@@ -35,10 +35,6 @@ TxTt is a free, offline-first messaging app built as a Progressive Web App (PWA)
 - Sending a message or starting a call always shows a confirmation card first, so nothing happens without your approval
 - All actions run with your own login, so your data stays protected by row-level security
 
-### Installable PWA
-- Works offline (service worker + caching)
-- Installable to the home screen on Android and iOS
-- Standalone, full-screen app experience
 
 ---
 
