@@ -1,4 +1,91 @@
+import ChatInput from './GeminiCode';
 import { useEffect, useRef, useState } from "react";
+// Hukommelse for opptak og kamera
+const [isRecording, setIsRecording] = useState(false);
+const [showCamera, setShowCamera] = useState(false);
+
+const videoRef = useRef(null);
+const mediaRecorderRef = useRef(null);
+const audioChunksRef = useRef([]);
+// --- KAMERA-LOGIKK ---
+const startCamera = async () => {
+  setShowCamera(true);
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    if (videoRef.current) videoRef.current.srcObject = stream;
+  } catch (err) {
+    console.error("Klarte ikke å åpne kamera:", err);
+    alert("Kunne ikke åpne webkameraet. Sjekk tilganger.");
+    setShowCamera(false);
+  }
+};
+
+const capturePhoto = () => {
+  const video = videoRef.current;
+  if (!video) return;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  
+  canvas.toBlob((blob) => {
+    if (blob) {
+      const file = new File([blob], `snap_${Date.now()}.png`, { type: 'image/png' });
+      
+      // HER SENDER DU BILDET:
+      // Hvis koden din bruker handleImageSelect, kan vi lure den til å tro at dette er et valgt bilde:
+      const fakeEvent = { target: { files: [file] } };
+      handleImageSelect(fakeEvent); 
+      
+      closeCamera();
+    }
+  }, 'image/png');
+};
+
+const closeCamera = () => {
+  if (videoRef.current && videoRef.current.srcObject) {
+    videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+  }
+  setShowCamera(false);
+};
+
+// --- MIKROFON-LOGIKK ---
+const startRecording = async () => {
+  audioChunksRef.current = [];
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mediaRecorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = mediaRecorder;
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) audioChunksRef.current.push(event.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
+      
+      // TODO: Her må du sende audioFile til backend på samme måte som du sender bilder!
+      console.log("Lydopptak ferdig, klar til å sendes:", audioFile);
+      
+      stream.getTracks().forEach(track => track.stop()); // Skrur av mikrofonlyset på PC-en
+    };
+
+    mediaRecorder.start();
+    setIsRecording(true);
+  } catch (err) {
+    console.error("Klarte ikke å åpne mikrofon:", err);
+    alert("Kunne ikke åpne mikrofonen. Sjekk tilganger.");
+  }
+};
+
+const stopRecording = () => {
+  if (mediaRecorderRef.current && isRecording) {
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+  }
+};
 import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import {
@@ -381,28 +468,7 @@ export default function ChatRoom() {
         </div>
       )}
 
-      {/* Input bar */}
-      <div className="chat-input-bar">
-        {/* Image picker */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: "none" }}
-          onChange={handleImageSelect}
-        />
-        <button
-          className="icon-btn"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={sending || !!imagePreview}
-          title="Send image"
-          type="button"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
-            <polyline points="21 15 16 10 5 21"/>
-          </svg>
-        </button>
+     {/* 1. FJERN <ChatInput /> herfra så det ikke blir dobbeltopp */}
 
         {/* Text input */}
         <textarea
@@ -416,23 +482,91 @@ export default function ChatRoom() {
           disabled={sending}
         />
 
-        {/* Send or mic */}
-        {input.trim() ? (
+        <div className="chat-input-bar">
+          {/* Existing Image picker */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={handleImageSelect}
+          />
           <button
-            className="send-btn active"
-            onClick={handleSend}
-            disabled={sending}
+            className="icon-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending || !!imagePreview}
+            title="Send image"
             type="button"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="m22 2-7 20-4-9-9-4 20-7z"/><path d="M22 2 11 13"/>
+              <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
             </svg>
           </button>
-        ) : (
-          <AudioRecorder onRecorded={handleAudioRecorded} disabled={sending} />
-        )}
-      </div>
 
+          {/* NEW: Camera Button */}
+          <button
+            className="icon-btn"
+            onClick={startCamera} 
+            disabled={sending}
+            title="Take Picture"
+            type="button"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+          </button>
+
+          {/* NEW: Microphone Button */}
+          <button
+            className="icon-btn"
+            onClick={isRecording ? stopRecording : startRecording} 
+            disabled={sending}
+            title={isRecording ? "Stop Recording" : "Record Audio"}
+            style={{ color: isRecording ? '#ef4444' : 'currentColor' }}
+            type="button"
+          >
+            {isRecording ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 1v11m0 0a4 4 0 0 1-4-4V5a4 4 0 0 1 8 0v4a4 4 0 0 1-4 4z"/>
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 21v2m-4 0h8"/>
+              </svg>
+            )}
+          </button>
+          
+          {/* NY/GJENOPPRETTA: Send-knapp på høyre side av baren */}
+          <button 
+            className="send-btn" 
+            onClick={handleSend} // Eller hva send-funksjonen din heter i Chatroom
+            disabled={sending || (!input.trim() && !imagePreview)} 
+            title="Send message"
+            type="button"
+            style={{ marginLeft: 'auto' }} // Skyver den helt til høyre i baren
+          >
+            {/* Et enkelt send-pil-ikon */}
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+          {/* Kamera Popup Modal */}
+  {showCamera && (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+      <div style={{ background: '#222', padding: '20px', borderRadius: '8px', maxWidth: '400px', width: '90%', textAlign: 'center' }}>
+        <video ref={videoRef} autoPlay playsInline style={{ width: '100%', borderRadius: '8px', transform: 'scaleX(-1)' }}></video>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '15px' }}>
+          <button onClick={closeCamera} type="button" style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>Avbryt</button>
+          <button onClick={capturePhoto} type="button" style={{ background: '#10b981', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>Knips Bilde</button>
+        </div>
+      </div>
     </div>
+  )}
+        </div>
+      </div>
   );
 }
