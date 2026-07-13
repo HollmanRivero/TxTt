@@ -1,36 +1,18 @@
-# Environment files — NEVER commit these
-cd ~/Documents/GitHub/TxTt2.05.10/TxTt
-
-# Sjekk at disse er i .gitignore (de skal ignorere)
-echo "
-# Byggegenererte filer
-dist/
-frontend/dist/
-android/
-frontend/android/
-frontend/apk-output/
-
-# Avhengigheter
-node_modules/
-frontend/node_modules/
-
-# Miljøvariabler
+# Sensitive filer (Miljøvariabler)
 .env
 .env.local
-supabase/.env
+.env.production
 
-# OS-filer
+# Tunge eksterne avhengigheter (Laster ikke opp disse!)
+node_modules/
+jspm_packages/
+
+# Autogenererte bygg- og produksjonsmapper
+dist/
+build/
+.next/
+out/
+
+# Systemfiler (Mac / Windows som lager rot)
 .DS_Store
 Thumbs.db
-
-# Editor
-.vscode/
-
-# Temporære filer
-supabase/.temp/
-supabase/.branches/
-
-# Lokale skript
-Oppdater.sh
-frontend/.npmrc
-" > .gitignore

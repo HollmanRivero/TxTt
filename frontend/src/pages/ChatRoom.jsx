@@ -1,255 +1,311 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { supabase } from "../lib/supabase";
+import { inviteToCall } from "../lib/webrtc"; 
+import { getMessages, sendMessage, sendImageMessage, sendAudioMessage, getRetention, setRetention } from "../lib/messages";
+import ChatInput from "../components/ChatInput";
+import { Phone, Video, Trash2, ChevronLeft, FileText, Download } from "lucide-react"; 
 import "./ChatRoom.css";
 
 export default function ChatRoom() {
-  const params = useParams();
-  const conversationId = params.id || params.conversationId || Object.values(params)[0];
-  
+  const { conversationId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
-  
+
   const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [isRecording, setIsRecording] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
-  
+  const [peer, setPeer] = useState(null);
+  const [loading, setLoading] = useState(!conversationId || conversationId === 'undefined' ? false : true);
+  const [showRetentionMenu, setShowRetentionMenu] = useState(false);
+  const [retentionHours, setRetentionHours] = useState(null); 
+
   const messagesEndRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const localVideoRef = useRef(null);
-  const cameraStreamRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const canvasRef = useRef(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  useEffect(() => {
-    if (!conversationId || !user) {
-      setLoading(false);
+    if (!conversationId || conversationId === 'undefined' || !user) {
       return;
     }
 
-    let active = true;
+    let isMounted = true;
 
-    async function loadMessagesOnly() {
+    async function loadChatData() {
       try {
-        const { data: msgs, error: msgsErr } = await supabase
-          .from("messages")
-          .select("*")
+        const data = await getMessages(conversationId, 50);
+        if (!isMounted) return;
+        setMessages(data || []);
+
+        const hours = await getRetention(conversationId);
+        if (!isMounted) return;
+        setRetentionHours(hours);
+
+        const { data: members, error: membersError } = await supabase
+          .from("conversation_members")
+          .select("user_id, profiles(id, full_name, username, avatar_url)")
           .eq("conversation_id", conversationId)
-          .order("created_at", { ascending: true });
-        
-        if (msgsErr) throw msgsErr;
-        if (active) setMessages(msgs || []);
+          .neq("user_id", user.id);
+
+        if (membersError) throw membersError;
+
+        if (isMounted && members && members.length > 0) {
+          const profileData = members[0].profiles;
+          setPeer({
+            id: members[0].user_id, 
+            full_name: profileData?.full_name,
+            username: profileData?.username,
+            avatar_url: profileData?.avatar_url
+          });
+        }
       } catch (err) {
-        console.error("Klarte ikke hente meldinger:", err.message);
+        console.error("Error loading chat:", err);
       } finally {
-        if (active) setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
 
-    loadMessagesOnly();
+    loadChatData();
 
     const channel = supabase
       .channel(`room:${conversationId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
+        { event: "*", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
         (payload) => {
-          if (active) setMessages((prev) => [...prev, payload.new]);
+          if (!isMounted) return;
+          if (payload.eventType === "INSERT") {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === payload.new.id)) return prev;
+              return [...prev, payload.new];
+            });
+          } else if (payload.eventType === "DELETE") {
+            setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
+          }
         }
       )
       .subscribe();
 
     return () => {
-      active = false;
+      isMounted = false;
       supabase.removeChannel(channel);
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach(track => track.stop());
-      }
     };
   }, [conversationId, user]);
 
-  const handleLogAction = (val) => {
-    if (val === "0") return;
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // FIKS: Gjennomgått og sikret at fil og tekst sendes uavhengig av rekkefølge
+  const handleSendMessage = async (text, file = null) => {
+    if (!user || !conversationId || conversationId === 'undefined') return;
     
-    if (val === "now") {
-      setMessages([]);
-      return;
-    }
+    try {
+      // Hvis første argument tilfeldigvis er et File-objekt (fordi rekkefølgen ble snudd i komponenten)
+      const actualFile = file || (text instanceof File ? text : null);
+      const actualText = text instanceof File ? "" : text;
 
-    const minutes = parseFloat(val);
-    const ms = minutes * 60 * 1000;
-    setTimeout(() => { 
+      if (actualFile) {
+        console.log("[ChatRoom] Starter opplasting av fil:", actualFile.name);
+        const newFileMsg = await sendImageMessage(conversationId, user.id, actualFile);
+        if (newFileMsg) {
+          setMessages((prev) => [...prev, newFileMsg]);
+          console.log("[ChatRoom] Fil lastet opp og sendt suksessfullt!");
+        }
+      } else if (actualText && typeof actualText === "string" && actualText.trim()) {
+        const newTxtMsg = await sendMessage(conversationId, user.id, actualText.trim());
+        if (newTxtMsg) setMessages((prev) => [...prev, newTxtMsg]);
+      }
+    } catch (err) {
+      console.error("[ChatRoom] Kunne ikke sende melding eller laste opp fil:", err);
+    }
+  };
+
+  const handleSendAudio = async (audioBlob) => {
+    if (!user || !conversationId || conversationId === 'undefined') return;
+    try {
+      const newAudioMsg = await sendAudioMessage(conversationId, user.id, audioBlob);
+      if (newAudioMsg) setMessages((prev) => [...prev, newAudioMsg]);
+    } catch (err) {
+      console.error("Failed to send audio message:", err);
+    }
+  };
+
+  const handleUpdateRetention = async (hours) => {
+    if (!conversationId || conversationId === 'undefined') return;
+    setRetentionHours(hours);
+    setShowRetentionMenu(false);
+
+    if (hours === 0) {
       setMessages([]); 
-    }, ms);
-  };
-
-  const handleSendMessage = async () => {
-    const cleanMessage = newMessage.trim();
-    if (!cleanMessage || !user || !conversationId || conversationId.includes("00000000")) return;
+    }
 
     try {
-      const { error } = await supabase.from("messages").insert({
-        conversation_id: conversationId,
-        sender_id: user.id,
-        text: cleanMessage, 
-      });
-
-      if (error) {
-        await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          sender_id: user.id,
-          content: cleanMessage, 
-        });
+      await setRetention(conversationId, hours);
+      if (hours === 0) {
+        await supabase.from("messages").delete().eq("conversation_id", conversationId);
       }
-      setNewMessage("");
     } catch (err) {
-      console.error(err);
+      console.error("Failed to update retention:", err);
     }
   };
 
-  const capturePhoto = async () => {
-    if (!localVideoRef.current || !canvasRef.current || !user || !conversationId) return;
-    const video = localVideoRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas.getContext("2d");
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    context.translate(canvas.width, 0);
-    context.scale(-1, 1);
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const photoDataUrl = canvas.toDataURL("image/jpeg", 0.8);
-
+  const initiateCall = async (isVideoCall) => {
+    if (!user || !peer || !conversationId || conversationId === 'undefined') return;
     try {
-      const { error } = await supabase.from("messages").insert({
-        conversation_id: conversationId,
-        sender_id: user.id,
-        text: photoDataUrl,
+      const myName = user.profile?.full_name || user.profile?.username || user.email || "TxTt User";
+      await inviteToCall({
+        targetUserId: peer.id,
+        conversationId,
+        callerId: user.id,
+        callerName: myName,
+        isVideo: isVideoCall
       });
-      if (error) {
-        await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          sender_id: user.id,
-          content: photoDataUrl,
-        });
-      }
-      toggleCamera();
+
+      navigate(`/call/${conversationId}`, {
+        state: { 
+          isVideo: isVideoCall, 
+          isAnswering: false, 
+          callerName: peer.full_name || peer.username || "Contact" 
+        }
+      });
     } catch (err) {
-      console.error(err);
+      console.error("Call initialization failed:", err);
     }
   };
 
-  const toggleCamera = async () => {
-    if (cameraActive) {
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      setCameraActive(false);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        cameraStreamRef.current = stream;
-        setCameraActive(true);
-        setTimeout(() => {
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-            localVideoRef.current.play().catch(e => console.error(e));
-          }
-        }, 100);
-      } catch (err) {
-        alert("Kunne ikke starte kamera.");
-      }
+  const getFileName = (url) => {
+    if (!url) return "Shared File";
+    try {
+      const cleanUrl = url.split('?')[0];
+      const parts = cleanUrl.split("/");
+      const lastPart = parts[parts.length - 1] || "Document";
+      return lastPart.includes("_") ? lastPart.split("_").slice(1).join("_") : lastPart;
+    } catch {
+      return "Document";
     }
   };
-
-  const handleMicClick = async () => {
-    if (isRecording) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
-        audioChunksRef.current = [];
-        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
-        mediaRecorder.onstop = () => { stream.getTracks().forEach(track => track.stop()); setIsRecording(false); };
-        mediaRecorder.start();
-        setIsRecording(true);
-      } catch (err) {
-        alert("Kunne ikke åpne mikrofon.");
-      }
-    }
-  };
-
-  if (loading) return <div className="chat-loading">Åpner samtalerom...</div>;
 
   return (
-    <div className="chat-root">
-      <header className="chat-header">
-        <div className="chat-header-left">
-          <button className="back-btn" onClick={() => navigate("/conversations")}>←</button>
-          <div className="chat-partner-info">Samtale</div>
+    <div className="chat-root" style={{ display: "flex", flexDirection: "column", height: "100vh", width: "100vw", overflow: "hidden", position: "relative", backgroundColor: "rgb(11, 11, 15)", color: "#ffffff" }}>
+      {/* HEADER */}
+      <header className="chat-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", height: "70px", padding: "0 16px", borderBottom: "1px solid rgba(255,255,255,0.05)", boxSizing: "border-box", zIndex: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", flex: 1 }}>
+          <button className="back-btn" onClick={() => navigate("/")} style={{ marginRight: "8px", background: "none", border: "none", color: "#fff", cursor: "pointer" }}>
+            <ChevronLeft size={24} />
+          </button>
+          <div className="avatar sm" style={{ width: "36px", height: "36px", borderRadius: "50%", backgroundColor: "#1f1f2e", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "600", color: "#ffffff" }}>
+            {peer?.avatar_url ? (
+              <img src={peer.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+            ) : (
+              (peer?.full_name || peer?.username || "?")[0].toUpperCase()
+            )}
+          </div>
+          <span className="chat-header-name" style={{ marginLeft: "10px", fontSize: "0.95rem", fontWeight: 500, color: "#ffffff" }}>
+            {peer?.full_name || peer?.username || "Loading..."}
+          </span>
         </div>
-        <select className="chat-timer-select" onChange={(e) => handleLogAction(e.target.value)} defaultValue="0">
-          <option value="0">Logginnstillinger ⚙️</option>
-          <option value="now">Tøm logg nå</option>
-          <option value="15">Slett om 15 min</option>
-          <option value="30">Slett om 30 min</option>
-          <option value="60">Slett om 1 time</option>
-          <option value="180">Slett om 3 timer</option>
-          <option value="720">Slett om 12 timer</option>
-          <option value="1440">Slett om 24 timer</option>
-        </select>
+
+        <div className="chat-header-actions" style={{ position: "relative", display: "flex", gap: "12px", alignItems: "center" }}>
+          <button className="icon-btn" onClick={() => initiateCall(false)} title="Audio Call" type="button" style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: "6px" }}>
+            <Phone size={20} />
+          </button>
+          <button className="icon-btn" onClick={() => initiateCall(true)} title="Video Call" type="button" style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: "6px" }}>
+            <Video size={20} />
+          </button>
+          
+          <button className="icon-btn" onClick={() => setShowRetentionMenu(!showRetentionMenu)} title="Auto-delete settings" type="button" style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+            <Trash2 size={20} />
+            <span className="retention-badge" style={{ fontSize: "0.75rem", opacity: 0.8, color: "#ffffff" }}>
+              {retentionHours === 0 ? "🔥" : retentionHours === null ? "♾️" : `${retentionHours}h`}
+            </span>
+          </button>
+          
+          {showRetentionMenu && (
+            <div className="retention-menu" style={{ position: "absolute", top: "100%", right: 0, zIndex: 100, background: "#121218", border: "1px solid #232330", borderRadius: "12px", padding: "8px", display: "flex", flexDirection: "column", minWidth: "160px" }}>
+              <p className="retention-title font-bold" style={{ margin: "4px 8px", fontSize: "0.75rem", color: "#888" }}>Auto-delete history</p>
+              <button type="button" className={`retention-option ${retentionHours === 0 ? "active" : ""}`} onClick={() => handleUpdateRetention(0)}>🔥 Delete instantly</button>
+              <button type="button" className={`retention-option ${retentionHours === 24 ? "active" : ""}`} onClick={() => handleUpdateRetention(24)}>🕒 24 Hours</button>
+              <button type="button" className={`retention-option ${retentionHours === 168 ? "active" : ""}`} onClick={() => handleUpdateRetention(168)}>🗓️ 7 Days</button>
+              <button type="button" className={`retention-option ${retentionHours === null ? "active" : ""}`} onClick={() => handleUpdateRetention(null)}>♾️ Keep forever</button>
+            </div>
+          )}
+        </div>
       </header>
 
-      <canvas ref={canvasRef} style={{ display: "none" }} />
+      {/* MELDINGSLISTE */}
+      <div className="chat-messages" style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "12px", boxSizing: "border-box" }}>
+        {loading ? (
+          <div className="chat-loading" style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%" }}><div className="spinner-lg" /></div>
+        ) : messages.length === 0 ? (
+          <div className="chat-empty" style={{ textAlign: "center", color: "#666", marginTop: "20px" }}>No messages yet. Say hello!</div>
+        ) : (
+          messages.map((msg, index) => {
+            const isOwn = msg.sender_id === user.id;
+            const cleanUrlPath = msg.file_url ? msg.file_url.toLowerCase().split('?')[0] : "";
+            const contentString = typeof msg.content === "string" ? msg.content : "";
+            
+            const isBase64Image = contentString.startsWith("data:image");
+            
+            const isImage = isBase64Image || (msg.file_url && (
+              cleanUrlPath.endsWith(".png") ||
+              cleanUrlPath.endsWith(".jpg") ||
+              cleanUrlPath.endsWith(".jpeg") ||
+              cleanUrlPath.endsWith(".gif") ||
+              cleanUrlPath.endsWith(".webp") ||
+              msg.message_type === "image"
+            ));
 
-      {cameraActive && (
-        <div className="camera-preview-container">
-          <video ref={localVideoRef} autoPlay playsInline muted />
-          <div className="camera-actions">
-            <button className="cam-capture-btn" onClick={capturePhoto}>Ta bilde 📸</button>
-            <button className="cam-cancel-btn" onClick={toggleCamera}>Avbryt</button>
-          </div>
-        </div>
-      )}
+            const isAudio = msg.file_url && (
+              cleanUrlPath.endsWith(".ogg") ||
+              cleanUrlPath.endsWith(".mp3") ||
+              cleanUrlPath.endsWith(".wav") ||
+              msg.message_type === "audio"
+            );
 
-      <div className="chat-messages">
-        {messages.map((msg) => {
-          const isMe = msg.sender_id === user?.id;
-          const msgContent = msg.text || msg.content;
-          const isImage = msgContent && msgContent.startsWith("data:image/");
-          return (
-            <div key={msg.id} className={`message-wrapper ${isMe ? "me" : "other"}`}>
-              <div className="message-bubble" style={isImage ? { padding: "4px", overflow: "hidden" } : {}}>
-                {isImage ? <img src={msgContent} alt="Sendt bilde" /> : <p className="message-text">{msgContent}</p>}
-                <span className="message-time">{new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+            const imageSrc = isBase64Image ? contentString : msg.file_url;
+
+            return (
+              <div key={msg.id || index} className={`msg-row ${isOwn ? "own" : "other"}`} style={{ display: "flex", justifyContent: isOwn ? "flex-end" : "flex-start", width: "100%" }}>
+                <div className="msg-col" style={{ maxWidth: "70%" }}>
+                  
+                  {contentString && !isBase64Image && !contentString.includes("[object Object]") && (
+                    <div className={`bubble ${isOwn ? "bubble-own" : "bubble-other"}`} style={{ color: "#ffffff" }}>
+                      {msg.content}
+                    </div>
+                  )}
+                  
+                  {isImage && imageSrc && (
+                    <div className="bubble bubble-media" style={{ padding: "4px", background: "none" }}>
+                      <img src={imageSrc} alt="Shared attachment" className="msg-image" style={{ maxWidth: "220px", maxHeight: "200px", borderRadius: "12px", display: "block", objectFit: "cover" }} />
+                    </div>
+                  )}
+
+                  {msg.file_url && !isImage && !isAudio && (
+                    <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className={`bubble ${isOwn ? "bubble-own" : "bubble-other"}`} style={{ display: "flex", alignItems: "center", gap: "10px", textDecoration: "none", color: "#ffffff" }}>
+                      <FileText size={24} style={{ color: isOwn ? "#fff" : "var(--primary)" }} />
+                      <div style={{ textAlign: "left", maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <p style={{ fontSize: "0.85rem", fontWeight: "500", margin: 0 }}>{getFileName(msg.file_url)}</p>
+                        <p style={{ fontSize: "0.7rem", opacity: 0.6, margin: 0 }}>Click to download</p>
+                      </div>
+                      <Download size={16} style={{ marginLeft: "auto", opacity: 0.8 }} />
+                    </a>
+                  )}
+
+                  {msg.file_url && isAudio && (
+                    <div className="bubble bubble-audio">
+                      <audio src={msg.file_url} controls className="msg-audio" />
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
         <div ref={messagesEndRef} />
       </div>
 
-      <footer className="chat-footer">
-        <input type="file" ref={fileInputRef} style={{ display: "none" }} onChange={(e) => alert(`Valgt fil: ${e.target.files?.[0]?.name}`)} />
-        <div className="chat-input-form">
-          <button type="button" className="action-btn" onClick={() => fileInputRef.current?.click()} title="Vedlegg"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg></button>
-          <button type="button" className="action-btn" onClick={toggleCamera} title="Kamera"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg></button>
-          <button type="button" className={`action-btn ${isRecording ? "recording" : ""}`} onClick={handleMicClick} title="Lydopptak">{isRecording ? <svg width="22" height="22" viewBox="0 0 24 24" fill="#ef4444"><rect x="4" y="4" width="16" height="16" rx="2" /></svg> : <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v1a7 7 0 0 1-14 0v-1" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></svg>}</button>
-          <input type="text" className="chat-input" placeholder="Skriv en melding..." value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSendMessage()} />
-          <button type="button" className="send-btn" onClick={handleSendMessage} disabled={!newMessage.trim()}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg></button>
-        </div>
-      </footer>
+      {/* INPUT-FELT */}
+      <div style={{ width: "100%", height: "80px", minHeight: "80px", boxSizing: "border-box", zIndex: 10 }}>
+        <ChatInput onSendMessage={handleSendMessage} onSendAudio={handleSendAudio} disabled={loading} />
+      </div>
     </div>
   );
 }

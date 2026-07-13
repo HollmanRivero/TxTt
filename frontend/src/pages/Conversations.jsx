@@ -1,170 +1,214 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { supabase } from "../lib/supabase";
+import { getConversations, searchUsers, startConversation } from "../lib/messages";
 import "./Conversations.css";
 
 export default function Conversations() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  
   const [conversations, setConversations] = useState([]);
-  const [searchResults, setSearchResults] = useState([]);
-  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
 
-  const getInitial = (name) => (name ? name[0].toUpperCase() : "？");
-
-  const generateUUID = () => {
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
-      const r = (Math.random() * 16) | 0;
-      const v = c === "x" ? r : (r & 0x3) | 0x8;
-      return v.toString(16);
-    });
-  };
-
+  // ── Load conversations ──────────────────────────────────────
   useEffect(() => {
     if (!user) return;
-
-    async function loadConversationsSecurely() {
-      try {
-        // FIKSEN: Vi henter KUN 'content' siden 'text' ikke eksisterer i databasen din!
-        const { data: messagesData, error: msgErr } = await supabase
-          .from("messages")
-          .select("conversation_id, content, created_at")
-          .order("created_at", { ascending: false });
-
-        if (msgErr) throw msgErr;
-
-        const seenRooms = new Set();
-        const uniqueRooms = [];
-
-        if (messagesData) {
-          for (const msg of messagesData) {
-            if (!seenRooms.has(msg.conversation_id)) {
-              seenRooms.add(msg.conversation_id);
-              
-              // Sjekker om den siste meldingen er et bilde eller tekst
-              let previewText = msg.content || "Ingen meldinger ennå";
-              if (previewText.startsWith("data:image/")) {
-                previewText = "📸 Bilde";
-              }
-
-              uniqueRooms.push({
-                conversation_id: msg.conversation_id,
-                last_message: previewText,
-                created_at: msg.created_at
-              });
-            }
-          }
-        }
-
-        setConversations(uniqueRooms);
-      } catch (err) {
-        console.error("Feil ved lasting av samtaler:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadConversationsSecurely();
+    getConversations(user.id)
+      .then(setConversations)
+      .catch(console.error)
+      .finally(() => setLoading(false));
   }, [user]);
 
+  // ── Search users ────────────────────────────────────────────
   useEffect(() => {
-    if (!search.trim()) return;
-    let active = true;
-
+    if (!search.trim()) { setSearchResults([]); return; }
     const t = setTimeout(async () => {
       setSearching(true);
-      try {
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("id, username, full_name")
-          .ilike("username", `%${search}%`)
-          .limit(10);
-
-        if (error) throw error;
-        if (active && data) {
-          setSearchResults(data.filter((r) => r.id !== user?.id));
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        if (active) setSearching(false);
-      }
+      const results = await searchUsers(search).catch(() => []);
+      setSearchResults(results.filter((r) => r.id !== user?.id));
+      setSearching(false);
     }, 300);
-
-    return () => { active = false; clearTimeout(t); };
+    return () => clearTimeout(t);
   }, [search, user]);
 
-  const handleStartConversation = (targetUser) => {
-    if (!user) return;
-    const secureUUID = generateUUID();
-    setShowSearch(false);
-    setSearch("");
-    setSearchResults([]);
-    navigate(`/chat/${secureUUID}`);
+  // ── Start conversation ──────────────────────────────────────
+  const handleStartConversation = async (otherUser) => {
+    try {
+      const conv = await startConversation(user.id, otherUser.id);
+      setShowSearch(false);
+      setSearch("");
+      navigate(`/chat/${conv.id}`);
+    } catch (err) {
+      console.error(err);
+    }
   };
+
+  // ── Get last message preview ────────────────────────────────
+  const getLastMessage = (conv) => {
+    // Fiks: Faller rolig tilbake på et tomt array hvis det ikke finnes meldinger enno
+    const msgs = conv.conversations?.messages || [];
+    if (!msgs || msgs.length === 0) return "No messages yet";
+    
+    // Sorterer en kopi av listen for å unngå uventet mutering
+    const sorted = [...msgs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const last = sorted[0];
+    
+    if (!last || !last.content) return "Attachment shared"; // Håndterer bilde/lyd som mangler tekstinnhold
+    return last.content.length > 45 ? last.content.slice(0, 45) + "…" : last.content;
+  };
+
+  const formatTime = (ts) => {
+    if (!ts) return "";
+    const d = new Date(ts);
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
+
+  const getInitial = (name) =>
+    name ? name[0].toUpperCase() : <img src="/default-avatar.png" alt="" />;
+
+  // ───────────────────────────────────────────────────────────
 
   return (
     <div className="conv-root">
+
+      {/* Header */}
       <header className="conv-header">
         <span className="conv-logo">Tx<span>Tt</span></span>
         <div className="conv-header-actions">
-          <button className="icon-btn" onClick={() => setShowSearch(!showSearch)}>
+          <button className="icon-btn" onClick={() => setShowSearch(!showSearch)} title="New chat">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v6M8 11h6"/>
+            </svg>
+          </button>
+          <button className="icon-btn" onClick={() => navigate("/settings")} title="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
           </button>
         </div>
       </header>
 
+      {/* Search panel */}
       {showSearch && (
         <div className="search-panel">
           <input
             className="search-input"
             type="text"
-            placeholder="Søk etter brukere..."
+            placeholder="Search by name, username or phone…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             autoFocus
           />
-          {searching && <div style={{color: '#a78bfa', padding: '10px'}}>Søker...</div>}
+          {searching && <p className="search-hint">Searching…</p>}
+          {!searching && search && searchResults.length === 0 && (
+            <p className="search-hint">No users found</p>
+          )}
           {searchResults.map((u) => (
-            <button key={u.id} className="search-result" onClick={() => handleStartConversation(u)}>
+            <button
+              key={u.id}
+              className="search-result"
+              onClick={() => handleStartConversation(u)}
+            >
               <div className="avatar">{getInitial(u.full_name || u.username)}</div>
               <div className="search-result-info">
-                <span>{u.full_name || u.username}</span>
+                <span className="result-name">{u.full_name || u.username || "Unknown"}</span>
+                <span className="result-sub">{u.phone || u.username || ""}</span>
               </div>
             </button>
           ))}
         </div>
       )}
 
+      {/* Conversation list */}
       <div className="conv-list">
-        {loading && <div className="conv-empty"><div className="spinner-lg" /></div>}
-        
-        {!loading && conversations.length === 0 && (
-          <div className="conv-empty" style={{color: '#a78bfa', padding: '20px'}}>Trykk på + for å starte en samtale</div>
+        {loading && (
+          <div className="conv-empty">
+            <div className="spinner-lg" />
+          </div>
         )}
 
-        {conversations.map((c) => (
-          <button key={c.conversation_id} className="conv-item" onClick={() => navigate(`/chat/${c.conversation_id}`)}>
-            <div className="avatar">💬</div>
-            <div className="conv-item-body">
-              <div className="conv-item-top">
-                <span className="conv-name">Samtalerom</span>
-                <span className="conv-time">
-                  {c.created_at ? new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
-                </span>
+        {!loading && conversations.length === 0 && (
+          <div className="conv-empty">
+            <p className="empty-icon">💬</p>
+            <p className="empty-title">No conversations yet</p>
+            <p className="empty-sub">Tap the search icon above to find someone</p>
+          </div>
+        )}
+
+        {conversations.map((c) => {
+          const other = c.profiles;
+          const convId = c.conversation_id;
+          const lastMsg = getLastMessage(c);
+          
+          // Fiks: trygg uthenting av tidsstempel uten fare for krasj
+          const msgs = c.conversations?.messages || [];
+          const lastMsgTime = msgs.length > 0 
+            ? [...msgs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.created_at 
+            : null;
+
+          return (
+            <button
+              key={convId}
+              className="conv-item"
+              onClick={() => navigate(`/chat/${convId}`)}
+            >
+              <div className="avatar">
+                {other?.avatar_url
+                  ? <img src={other.avatar_url} alt="" />
+                  : getInitial(other?.full_name || other?.username)}
               </div>
-              <p className="conv-preview">{c.last_message}</p>
-            </div>
-          </button>
-        ))}
+              <div className="conv-item-body">
+                <div className="conv-item-top">
+                  <span className="conv-name">
+                    {other?.full_name || other?.username || "Unknown"}
+                  </span>
+                  <span className="conv-time">{formatTime(lastMsgTime)}</span>
+                </div>
+                <p className="conv-preview">{lastMsg}</p>
+              </div>
+            </button>
+          );
+        })}
       </div>
+
+      {/* Floating assistant button */}
+      <button
+        className="bot-fab"
+        onClick={() => navigate("/bot")}
+        title="Assistant"
+        aria-label="Open assistant"
+        style={{
+          position: "fixed",
+          right: "20px",
+          bottom: "24px",
+          width: "58px",
+          height: "58px",
+          borderRadius: "50%",
+          background: "#3b6ef5",
+          border: "none",
+          color: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          boxShadow: "0 4px 18px rgba(59,110,245,0.45)",
+          zIndex: 50,
+        }}
+      >
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2.5l1.6 4.3 4.3 1.6-4.3 1.6L12 14.3l-1.6-4.3L6.1 8.4l4.3-1.6L12 2.5z"/>
+          <path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z"/>
+        </svg>
+      </button>
     </div>
   );
 }
