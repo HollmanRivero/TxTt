@@ -38,7 +38,6 @@ export async function sendMessage(conversationId, senderId, content) {
   }
 }
 
-// FIKS: Bruker nå din korrekte mappenøkkel 'media' i stedet for 'chat-media'
 export async function sendImageMessage(conversationId, senderId, file) {
   if (!conversationId || conversationId === 'undefined') return null;
   try {
@@ -82,7 +81,6 @@ export async function sendImageMessage(conversationId, senderId, file) {
   }
 }
 
-// FIKS: Bruker nå din korrekte mappenøkkel 'media' i stedet for 'chat-media'
 export async function sendAudioMessage(conversationId, senderId, blob) {
   if (!conversationId || conversationId === 'undefined') return null;
   try {
@@ -184,33 +182,69 @@ export async function updateProfile(userId, updates) {
     return data;
   } catch (err) {
     console.error('Error updating profile:', err);
-    throw err;
+    return null;
   }
 }
 
 export async function getConversations(userId) {
   try {
-    const { data, error } = await supabase
+    // 1. Hent alle samtale-ID-er brukeren er med i
+    const { data: memberships, error: memberError } = await supabase
+      .from('conversation_members')
+      .select('conversation_id')
+      .eq('user_id', userId);
+
+    if (memberError) throw memberError;
+    if (!memberships || memberships.length === 0) return [];
+
+    const convIds = memberships.map(m => m.conversation_id);
+
+    // 2. Hent selve samtalene og meldinger tilknyttet dem
+    const { data: convs, error: convError } = await supabase
+      .from('conversations')
+      .select(`
+        id,
+        created_at,
+        retention_hours,
+        messages (
+          id,
+          content,
+          created_at,
+          sender_id
+        )
+      `)
+      .in('id', convIds);
+
+    if (convError) throw convError;
+
+    // 3. Hent den andre deltakeren i hver samtale for å få tak i profilinfo (navn/avatar)
+    const { data: otherMembers, error: otherError } = await supabase
       .from('conversation_members')
       .select(`
         conversation_id,
-        conversations (
-          id,
-          created_at,
-          retention_hours
-        )
+        user_id,
+        profiles (*)
       `)
-      .eq('user_id', userId);
+      .in('conversation_id', convIds)
+      .neq('user_id', userId);
 
-    if (error) throw error;
-    
-    return data?.map((item, index) => {
-      if (!item.conversations) return null;
+    if (otherError) console.error('Error fetching other members:', otherError);
+
+    // Sett sammen dataene slik at Conversations.jsx forventer det
+    return convs.map(conv => {
+      const otherMember = otherMembers?.find(m => m.conversation_id === conv.id);
       return {
-        ...item.conversations,
-        id: item.conversations.id || `fallback-id-${index}`
+        id: conv.id,
+        conversation_id: conv.id,
+        created_at: conv.created_at,
+        retention_hours: conv.retention_hours,
+        conversations: {
+          messages: conv.messages || []
+        },
+        profiles: otherMember?.profiles || null
       };
-    }).filter(Boolean) || [];
+    });
+
   } catch (err) {
     console.error('Error fetching conversations:', err);
     return [];
@@ -257,7 +291,7 @@ export async function startConversation(currentUserId, targetUserId) {
       if (matchError) throw matchError;
 
       if (commonConversations && commonConversations.length > 0) {
-        return commonConversations[0].conversation_id;
+        return { id: commonConversations[0].conversation_id };
       }
     }
 
@@ -279,14 +313,14 @@ export async function startConversation(currentUserId, targetUserId) {
 
     if (memberError) throw memberError;
 
-    return conversationId;
+    return { id: conversationId };
   } catch (err) {
     console.error('Error start conversation:', err);
     throw err;
   }
 }
 
-// 4. PROXY FALLBACK (Sikkerhetsnett)
+// 4. PROXY FALLBACK
 const fallbackHandlers = {
   get(target, prop) {
     if (prop in target) {

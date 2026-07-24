@@ -57,12 +57,12 @@ export default function ChatInput({ onSendMessage, onSendAudio, disabled }) {
     <form 
       onSubmit={handleSubmit}
       style={{
-        padding: "0 30px", /* God plass på kantene */
+        padding: "0 30px",
         backgroundColor: "#0d0d12",
         borderTop: "1px solid rgba(255, 255, 255, 0.05)",
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between", /* Fordeler binders, tekstfelt og mikrofon jevnt */
+        justifyContent: "space-between",
         width: "100%",
         height: "80px",
         boxSizing: "border-box"
@@ -97,17 +97,19 @@ export default function ChatInput({ onSendMessage, onSendAudio, disabled }) {
         </button>
       </div>
 
-      {/* 2. TEKSTFELT (Smalere utgave i midten som aldri tar over skjermen) */}
+      {/* 2. TEKSTFELT (I midten med id og name for å fjerne nettleseradvarsel) */}
       <input
         type="text"
+        id="message-input"
+        name="message"
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={isRecording ? "Spiller inn lyd..." : "Type a message..."}
         disabled={disabled || isRecording}
         style={{
-          width: "60%", /* FIKS: Gjør skrivelinjen smalere */
-          maxWidth: "500px", /* Hindrer at den blir for lang på svære PC-skjermer */
-          height: "48px",
+          width: "60%", 
+          maxWidth: "500px", 
+          height: "48px", 
           backgroundColor: "#1c1c24",
           border: "1px solid rgba(255, 255, 255, 0.1)",
           borderRadius: "24px",
@@ -118,7 +120,7 @@ export default function ChatInput({ onSendMessage, onSendAudio, disabled }) {
         }}
       />
 
-      {/* 3. MIKROFON / SEND-KNAPP (Høyre side - Nå med massevis av luft!) */}
+      {/* 3. MIKROFON / SEND-KNAPP (Høyre side) */}
       <div style={{ width: "50px", minWidth: "50px", display: "flex", justifyContent: "flex-end" }}>
         {text.trim() ? (
           <button 

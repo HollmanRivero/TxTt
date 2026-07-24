@@ -15,7 +15,7 @@ export default function ChatRoom() {
 
   const [messages, setMessages] = useState([]);
   const [peer, setPeer] = useState(null);
-  const [loading, setLoading] = useState(!conversationId || conversationId === 'undefined' ? false : true);
+  const [loading, setLoading] = useState(false); // Satt til false som standard for å unngå at input låser seg
   const [showRetentionMenu, setShowRetentionMenu] = useState(false);
   const [retentionHours, setRetentionHours] = useState(null); 
 
@@ -23,6 +23,7 @@ export default function ChatRoom() {
 
   useEffect(() => {
     if (!conversationId || conversationId === 'undefined' || !user) {
+      setLoading(false);
       return;
     }
 
@@ -30,6 +31,7 @@ export default function ChatRoom() {
 
     async function loadChatData() {
       try {
+        setLoading(true);
         const data = await getMessages(conversationId, 50);
         if (!isMounted) return;
         setMessages(data || []);
@@ -93,12 +95,14 @@ export default function ChatRoom() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // FIKS: Gjennomgått og sikret at fil og tekst sendes uavhengig av rekkefølge
+  // Robust meldingshåndtering som sikrer at knapper og enter-trykk fungerer
   const handleSendMessage = async (text, file = null) => {
-    if (!user || !conversationId || conversationId === 'undefined') return;
+    if (!user || !conversationId || conversationId === 'undefined') {
+      console.warn("[ChatRoom] Kan ikke sende melding: Mangler bruker eller gyldig samtale-ID.");
+      return;
+    }
     
     try {
-      // Hvis første argument tilfeldigvis er et File-objekt (fordi rekkefølgen ble snudd i komponenten)
       const actualFile = file || (text instanceof File ? text : null);
       const actualText = text instanceof File ? "" : text;
 
@@ -107,11 +111,12 @@ export default function ChatRoom() {
         const newFileMsg = await sendImageMessage(conversationId, user.id, actualFile);
         if (newFileMsg) {
           setMessages((prev) => [...prev, newFileMsg]);
-          console.log("[ChatRoom] Fil lastet opp og sendt suksessfullt!");
         }
       } else if (actualText && typeof actualText === "string" && actualText.trim()) {
         const newTxtMsg = await sendMessage(conversationId, user.id, actualText.trim());
-        if (newTxtMsg) setMessages((prev) => [...prev, newTxtMsg]);
+        if (newTxtMsg) {
+          setMessages((prev) => [...prev, newTxtMsg]);
+        }
       }
     } catch (err) {
       console.error("[ChatRoom] Kunne ikke sende melding eller laste opp fil:", err);
@@ -199,7 +204,7 @@ export default function ChatRoom() {
             )}
           </div>
           <span className="chat-header-name" style={{ marginLeft: "10px", fontSize: "0.95rem", fontWeight: 500, color: "#ffffff" }}>
-            {peer?.full_name || peer?.username || "Loading..."}
+            {peer?.full_name || peer?.username || "Chat"}
           </span>
         </div>
 
@@ -238,7 +243,7 @@ export default function ChatRoom() {
           <div className="chat-empty" style={{ textAlign: "center", color: "#666", marginTop: "20px" }}>No messages yet. Say hello!</div>
         ) : (
           messages.map((msg, index) => {
-            const isOwn = msg.sender_id === user.id;
+            const isOwn = msg.sender_id === user?.id;
             const cleanUrlPath = msg.file_url ? msg.file_url.toLowerCase().split('?')[0] : "";
             const contentString = typeof msg.content === "string" ? msg.content : "";
             
@@ -304,7 +309,7 @@ export default function ChatRoom() {
 
       {/* INPUT-FELT */}
       <div style={{ width: "100%", height: "80px", minHeight: "80px", boxSizing: "border-box", zIndex: 10 }}>
-        <ChatInput onSendMessage={handleSendMessage} onSendAudio={handleSendAudio} disabled={loading} />
+        <ChatInput onSendMessage={handleSendMessage} onSendAudio={handleSendAudio} disabled={false} />
       </div>
     </div>
   );

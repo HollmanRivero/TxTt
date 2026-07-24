@@ -1,225 +1,140 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { supabase } from "../lib/supabase";
-import { PhoneOff, Mic, MicOff, Video as VideoIcon, VideoOff } from "lucide-react";
+import { CallSession } from "../lib/webrtc";
+import { PhoneOff, Mic, MicOff, Video as VideoIcon, VideoOff, RefreshCw } from "lucide-react";
 import "./CallRoom.css";
 
 export default function CallRoom() {
   const { conversationId } = useParams();
-  const navigate = useNavigate();
-  const location = useLocation();
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  const config = location.state || { isVideo: false, callerName: "Contact" };
+  const isVideo = location.state?.isVideo ?? true;
+  const callerName = location.state?.callerName || "Contact";
 
+  const [callState, setCallState] = useState("connecting");
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(!config.isVideo);
-  const [status, setStatus] = useState("Connecting...");
+  const [isVideoOff, setIsVideoOff] = useState(false);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
-  const streamRef = useRef(null);
-
-  const cleanUpAndExit = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-    }
-    navigate(`/chat/${conversationId}`);
-  }, [conversationId, navigate]);
+  const sessionRef = useRef(null);
 
   useEffect(() => {
-    if (!conversationId || !user) return;
+    if (!user || !conversationId) return;
 
-    async function startWebRTC() {
+    const session = new CallSession({
+      conversationId,
+      userId: user.id,
+      isVideo,
+      onRemoteStream: (stream) => {
+        console.log("[CallRoom] Mottok fjern-stream (remote stream)!");
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = stream;
+        }
+      },
+      onStateChange: (state) => {
+        console.log("[CallRoom] Tilstand endret:", state);
+        setCallState(state);
+        if (state === "ended") {
+          setTimeout(() => navigate(-1), 1500);
+        }
+      }
+    });
+
+    sessionRef.current = session;
+
+    async function initCall() {
       try {
-        setStatus("Requesting media access...");
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: config.isVideo,
-        });
-        
-        streamRef.current = stream;
-        if (localVideoRef.current) {
+        let stream;
+        if (location.state?.isAnswering) {
+          stream = await session.answerCall();
+        } else {
+          stream = await session.startCall();
+        }
+
+        if (localVideoRef.current && stream) {
           localVideoRef.current.srcObject = stream;
         }
-        
-        setStatus("In Call");
       } catch (err) {
-        console.error("WebRTC media error:", err);
-        setStatus("Media Access Denied");
+        console.error("Feil ved oppstart av samtalen:", err);
       }
     }
 
-    startWebRTC();
-
-    const channel = supabase
-      .channel(`room_call:${conversationId}`)
-      .on("broadcast", { event: "hangup" }, () => {
-        cleanUpAndExit();
-      })
-      .subscribe();
+    initCall();
 
     return () => {
-      supabase.removeChannel(channel);
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
+      session.hangup("cleanup");
     };
-  }, [conversationId, user, config.isVideo, cleanUpAndExit]);
+  }, [conversationId, user, isVideo, location.state, navigate]);
 
-  const handleHangUp = async () => {
-    try {
-      const callChannel = supabase.channel(`room_call:${conversationId}`);
-      await callChannel.subscribe();
-      await callChannel.send({
-        type: "broadcast",
-        event: "hangup",
-        payload: { senderId: user?.id }
-      });
-    } catch {
-      // Tom catch-blokk godkjent i moderne JS
-    }
-    cleanUpAndExit();
+  const handleHangup = () => {
+    sessionRef.current?.hangup("manual");
+    navigate(-1);
   };
 
   const toggleMute = () => {
-    if (streamRef.current) {
-      const audioTrack = streamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMuted(!audioTrack.enabled);
-      }
-    }
+    const muted = sessionRef.current?.toggleMute();
+    if (muted !== undefined) setIsMuted(muted);
   };
 
-  const toggleVideo = () => {
-    if (streamRef.current && config.isVideo) {
-      const videoTrack = streamRef.current.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoOff(!videoTrack.enabled);
-      }
+  const toggleCamera = () => {
+    const off = sessionRef.current?.toggleCamera();
+    if (off !== undefined) setIsVideoOff(off);
+  };
+
+  const switchCamera = async () => {
+    const newStream = await sessionRef.current?.switchCamera();
+    if (newStream && localVideoRef.current) {
+      localVideoRef.current.srcObject = newStream;
     }
   };
 
   return (
-    <div className="txtt-call-screen-root" style={{
-      position: "fixed",
-      top: 0,
-      left: 0,
-      width: "100vw",
-      height: "100vh",
-      backgroundColor: "#0b0b0f",
-      display: "flex",
-      flexDirection: "column",
-      justifyContent: "space-between",
-      alignItems: "center",
-      color: "#ffffff",
-      fontFamily: "system-ui, sans-serif",
-      overflow: "hidden",
-      zIndex: 1000
-    }}>
-      {/* TOPPSTATUS */}
-      <div className="txtt-call-top-status" style={{ textAlign: "center", marginTop: "40px", zIndex: 10 }}>
-        <h3 style={{ fontSize: "1.8rem", margin: "0 0 6px 0", fontWeight: "600" }}>{config.callerName}</h3>
-        <p className="txtt-status-subtext" style={{ fontSize: "0.95rem", color: "#8a8a9e", margin: 0 }}>{status}</p>
+    <div className="call-room-container" style={{ position: "relative", width: "100vw", height: "100vh", backgroundColor: "#0b0b0f", overflow: "hidden", display: "flex", justifyContent: "center", alignItems: "center" }}>
+      
+      {/* Fjern-video (stor skjerm) */}
+      <video 
+        ref={remoteVideoRef} 
+        autoPlay 
+        playsInline 
+        style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", top: 0, left: 0, zIndex: 1 }} 
+      />
+
+      {/* Status / Ventertekst hvis ingen bilde enda */}
+      <div style={{ position: "absolute", zIndex: 2, top: "24px", color: "#fff", background: "rgba(0,0,0,0.6)", padding: "8px 16px", borderRadius: "20px", fontSize: "0.9rem" }}>
+        {callState === "connected" ? callerName : `Status: ${callState}`}
       </div>
 
-      {/* VIDEORUTENETT */}
-      <div className="txtt-call-video-grid" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1 }}>
-        {config.isVideo && (
-          <div className="txtt-video-box local-view" style={{ position: "absolute", top: "40px", right: "40px", width: "150px", height: "220px", zIndex: 20, transform: "scaleX(-1)", borderRadius: "20px", overflow: "hidden", border: "1px solid rgba(255,255,255,0.05)" }}>
-            <video ref={localVideoRef} autoPlay playsInline muted className="txtt-video-feed" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            <span className="txtt-video-badge" style={{ position: "absolute", bottom: "12px", left: 12, background: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: "8px", fontSize: "0.75rem", transform: "scaleX(-1)" }}>You</span>
-          </div>
-        )}
-        
-        {/* FIKS: Endret justifyValue til justifyContent */}
-        <div className="txtt-video-box remote-view" style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <video ref={remoteVideoRef} autoPlay playsInline className="txtt-video-feed" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          <div className="txtt-avatar-fallback" style={{ width: "110px", height: "110px", borderRadius: "50%", backgroundColor: "#1f1f2e", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "3rem", fontWeight: "bold" }}>
-            {config.callerName ? config.callerName[0].toUpperCase() : "?"}
-          </div>
+      {/* Lokal video (liten rute nede i hjørnet) */}
+      {isVideo && (
+        <div style={{ position: "absolute", bottom: "100px", right: "24px", width: "120px", height: "160px", backgroundColor: "#1f1f2e", borderRadius: "12px", overflow: "hidden", zIndex: 3, border: "2px solid rgba(255,255,255,0.2)" }}>
+          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         </div>
-      </div>
+      )}
 
-      {/* KONTROLLKNAPPER */}
-      <div className="txtt-call-bottom-controls-bar" style={{
-        position: "absolute",
-        bottom: "48px",
-        left: "50%",
-        transform: "translateX(-50%)",
-        display: "flex",
-        alignItems: "center",
-        gap: "24px",
-        backgroundColor: "rgba(18, 18, 24, 0.75)",
-        padding: "16px 32px",
-        borderRadius: "40px",
-        backdropFilter: "blur(20px)",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-        boxShadow: "0 15px 35px rgba(0, 0, 0, 0.4)",
-        zIndex: 100
-      }}>
-        <button 
-          onClick={toggleMute} 
-          type="button"
-          style={{
-            width: "54px",
-            height: "54px",
-            borderRadius: "50%",
-            border: "none",
-            backgroundColor: isMuted ? "#ff3b30" : "rgba(255, 255, 255, 0.1)",
-            color: "#ffffff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer"
-          }}
-        >
-          {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
+      {/* Kontrollknapper i bunnen */}
+      <div style={{ position: "absolute", bottom: "24px", zIndex: 10, display: "flex", gap: "16px", alignItems: "center" }}>
+        <button onClick={toggleMute} style={{ width: "50px", height: "50px", borderRadius: "50%", backgroundColor: isMuted ? "#ff3b30" : "#2a2a3c", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
         </button>
 
-        <button 
-          onClick={handleHangUp} 
-          type="button"
-          style={{
-            width: "64px",
-            height: "64px",
-            borderRadius: "50%",
-            border: "none",
-            backgroundColor: "#ff3b30",
-            color: "#ffffff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            boxShadow: "0 8px 20px rgba(255, 59, 48, 0.3)"
-          }}
-        >
-          <PhoneOff size={26} />
-        </button>
-
-        {config.isVideo && (
-          <button 
-            onClick={toggleVideo} 
-            type="button"
-            style={{
-              width: "54px",
-              height: "54px",
-              borderRadius: "50%",
-              border: "none",
-              backgroundColor: isVideoOff ? "#ff3b30" : "rgba(255, 255, 255, 0.1)",
-              color: "#ffffff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer"
-            }}
-          >
-            {isVideoOff ? <VideoOff size={22} /> : <VideoIcon size={22} />}
-          </button>
+        {isVideo && (
+          <>
+            <button onClick={toggleCamera} style={{ width: "50px", height: "50px", borderRadius: "50%", backgroundColor: isVideoOff ? "#ff3b30" : "#2a2a3c", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {isVideoOff ? <VideoOff size={20} /> : <VideoIcon size={20} />}
+            </button>
+            <button onClick={switchCamera} style={{ width: "50px", height: "50px", borderRadius: "50%", backgroundColor: "#2a2a3c", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <RefreshCw size={20} />
+            </button>
+          </>
         )}
+
+        <button onClick={handleHangup} style={{ width: "60px", height: "60px", borderRadius: "50%", backgroundColor: "#ff3b30", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(255,59,48,0.4)" }}>
+          <PhoneOff size={24} />
+        </button>
       </div>
     </div>
   );
